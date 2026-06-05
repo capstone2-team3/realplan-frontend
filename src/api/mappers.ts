@@ -1,51 +1,37 @@
 // ───────────────────────── DTO ↔ 프론트 타입 변환 ─────────────────────────
-// 서버(소문자 enum, camelCase) ↔ 프론트(대문자 enum, camelCase) 변환.
-// 통합 설계서의 enum 표기가 소문자(low/medium/high 등)이므로 여기서 대문자로 바꾼다.
+// 백엔드 enum 값은 모두 대문자(LOW/MEDIUM/HIGH 등)로 내려오고,
+// 프론트 타입도 동일하게 대문자다. 따라서 값 형태가 같은 enum은 변환하지 않고
+// 그대로 통과(cast)시키고, 형태가 다른 것만 변환한다.
+//   - task.status(enum)        → completed(boolean)
+//   - focus_level(enum)        → 1~4(number)
+//   - focus_session.source     → TIMER / MANUAL  (SESSION만 TIMER로 다름)
 
 import type {
   Task, Folder, StudyRecord, User, TaskTypeCode, Importance, Difficulty,
 } from "../types";
 import type { TaskDTO, FolderDTO, StudyRecordDTO, UserDTO } from "./dto";
 
+// task_type.code: TIME_BASED / QUANTITY_BASED / SATISFACTION_BASED.
+// 값은 프론트와 동일하지만 join 시 undefined 가능 → 기본값만 보정.
 const toTaskType = (code: string | undefined): TaskTypeCode => {
   const up = (code ?? "").toUpperCase();
   if (up === "TIME_BASED" || up === "QUANTITY_BASED" || up === "SATISFACTION_BASED") return up;
   return "SATISFACTION_BASED";
 };
-// 설계서 priority: low/medium/high → 프론트 Importance HIGH/MEDIUM/LOW
-const toImportance = (p: string): Importance => {
-  switch ((p ?? "").toLowerCase()) {
-    case "high": return "HIGH";
-    case "low": return "LOW";
-    default: return "MEDIUM";
-  }
-};
-const fromImportance = (imp: Importance): string => imp.toLowerCase(); // high/medium/low
 
-// 설계서 difficulty: low/medium/high/unknown
-const toDifficulty = (d: string): Difficulty => {
-  switch ((d ?? "").toLowerCase()) {
-    case "high": return "HIGH";
-    case "medium": return "MEDIUM";
-    case "low": return "LOW";
-    default: return "UNKNOWN";
-  }
-};
-const fromDifficulty = (d: Difficulty): string => d.toLowerCase(); // low/medium/high/unknown
-
-// 설계서 focusLevel: low/medium/high/very_high → 프론트 1~4
+// session_feedback.focus_level: LOW / MEDIUM / HIGH / VERY_HIGH → 프론트 1~4
 const toFocusLevel = (f: string | null): 1 | 2 | 3 | 4 => {
-  switch ((f ?? "").toLowerCase()) {
-    case "low": return 1;
-    case "medium": return 2;
-    case "high": return 3;
-    case "very_high": return 4;
+  switch ((f ?? "").toUpperCase()) {
+    case "LOW": return 1;
+    case "MEDIUM": return 2;
+    case "HIGH": return 3;
+    case "VERY_HIGH": return 4;
     default: return 2;
   }
 };
-// 프론트 1~4 → 설계서 focusLevel
+// 프론트 1~4 → session_feedback.focus_level
 export const fromFocusLevel = (n: 1 | 2 | 3 | 4): string =>
-  ["", "low", "medium", "high", "very_high"][n];
+  ["", "LOW", "MEDIUM", "HIGH", "VERY_HIGH"][n];
 
 export function mapStudyRecord(dto: StudyRecordDTO): StudyRecord {
   return {
@@ -57,7 +43,8 @@ export function mapStudyRecord(dto: StudyRecordDTO): StudyRecord {
     progressPercent: dto.progressPercentAfter ?? 0,
     focusLevel: toFocusLevel(dto.focusLevel),
     notes: dto.note ?? undefined,
-    source: dto.source === "manual" ? "MANUAL" : "TIMER",
+    // focus_session.source: SESSION / MANUAL → 프론트 TIMER / MANUAL
+    source: dto.source === "MANUAL" ? "MANUAL" : "TIMER",
   };
 }
 
@@ -71,14 +58,16 @@ export function mapTask(dto: TaskDTO, records: StudyRecordDTO[] = []): Task {
     name: dto.title,
     type: toTaskType(dto.taskTypeCode),
     correctionEnabled: dto.aiEstimated != null,
-    importance: toImportance(dto.priority),
-    difficulty: toDifficulty(dto.difficulty),
+    // task.importance / task.difficulty: 백엔드 값과 프론트 타입이 동일 → 그대로 통과
+    importance: dto.priority as Importance,
+    difficulty: dto.difficulty as Difficulty,
     notes: dto.description ?? undefined,
     originalEstimatedMin: original,
     adjustedEstimatedMin: adjusted,
     remainingMin: Math.max(0, adjusted - spent),
     deadline: dto.dueDate ? new Date(dto.dueDate) : new Date(),
-    completed: dto.status === "completed" || dto.completedAt != null,
+    // task.status: PENDING / IN_PROGRESS / COMPLETED → completed(boolean)
+    completed: dto.status === "COMPLETED" || dto.completedAt != null,
     createdAt: new Date(dto.createdAt),
     lastNotifiedAt: dto.lastNotifiedAt ? new Date(dto.lastNotifiedAt) : undefined,
     records: records.map(mapStudyRecord),
@@ -95,13 +84,14 @@ export function mapUser(dto: UserDTO): User {
 
 // ── 프론트 → 서버 (생성/수정 요청 바디) ──
 // 통합 설계서 §4-4 Tasks. 부분 업데이트(PATCH)도 같은 형태를 사용.
+// difficulty/priority/taskTypeCode 는 프론트 값이 곧 서버 enum 값이라 그대로 전송.
 export function taskToBody(t: Omit<Task, "id" | "records" | "createdAt">) {
   return {
     folderId: Number(t.folderId),
     title: t.name,
     taskTypeCode: t.type,
-    difficulty: fromDifficulty(t.difficulty),
-    priority: fromImportance(t.importance),
+    difficulty: t.difficulty,
+    priority: t.importance,
     userEstimated: t.originalEstimatedMin,
     description: t.notes ?? null,
     dueDate: t.deadline.toISOString(),

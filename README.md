@@ -47,7 +47,7 @@ src/
 
 1. 프로젝트 루트에 `.env` 파일 생성 (`.env.example` 복사):
    ```
-   VITE_API_BASE_URL=http://localhost:8080/api/v1
+   VITE_API_BASE_URL=http://localhost:8080/api
    VITE_USE_REAL_API=true
    ```
 2. `npm run dev` 재시작.
