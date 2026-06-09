@@ -1,4 +1,4 @@
-import { AlertCircle, Calendar, ChevronLeft, Clock, Edit2, Info, Play, Plus } from "lucide-react";
+import { AlertCircle, Calendar, Check, ChevronLeft, Clock, Edit2, Info, Play, Plus } from "lucide-react";
 import type { Task } from "../types";
 import { Btn } from "../components/Btn";
 import { Card } from "../components/Card";
@@ -16,18 +16,22 @@ export function TaskDetailScreen({
   onStartSession,
   onAddManualRecord,
   onEditTask,
+  onCompleteTask,
 }: {
   task: Task;
   onBack: () => void;
   onStartSession: () => void;
   onAddManualRecord: () => void;
   onEditTask: () => void;
+  onCompleteTask: () => void;
 }) {
   const totalStudied = task.records.reduce((s, r) => s + r.durationMin, 0);
   const progressPct = Math.round((totalStudied / task.adjustedEstimatedMin) * 100);
-  const showCorrection =
-    task.adjustedEstimatedMin !== task.originalEstimatedMin &&
-    !(task.type === "TIME_BASED" && !task.correctionEnabled);
+  // 보정이 명시적으로 꺼진 경우(TIME형 보정 OFF)만 카드를 숨긴다.
+  const correctionDisabled = task.type === "TIME_BASED" && !task.correctionEnabled;
+  const showEstimate = !correctionDisabled;
+  // 실제로 보정값이 내 예측과 다를 때만 "보정 적용됨"으로 강조. 같으면(콜드스타트) 보정 대기 상태로 표시.
+  const corrected = task.adjustedEstimatedMin !== task.originalEstimatedMin;
 
   return (
     <div style={{ paddingBottom: 24 }}>
@@ -100,19 +104,19 @@ export function TaskDetailScreen({
           )}
         </div>
 
-        {showCorrection && (
+        {showEstimate && (
           <Card
             style={{
-              background: tone.warnSoft,
-              borderColor: tone.warnSoft,
+              background: corrected ? tone.warnSoft : tone.surfaceMuted,
+              borderColor: corrected ? tone.warnSoft : tone.border,
               marginBottom: 14,
               padding: 14,
             }}
           >
             <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 10 }}>
-              <AlertCircle size={14} color={tone.warn} />
-              <div style={{ fontSize: 12, fontWeight: 600, color: tone.warn }}>
-                AI 계획 오류 보정 적용됨
+              <AlertCircle size={14} color={corrected ? tone.warn : tone.inkMuted} />
+              <div style={{ fontSize: 12, fontWeight: 600, color: corrected ? tone.warn : tone.inkMuted }}>
+                {corrected ? "AI 계획 오류 보정 적용됨" : "AI 예측 · 보정 대기 중"}
               </div>
             </div>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 6 }}>
@@ -120,9 +124,9 @@ export function TaskDetailScreen({
                 <div style={{ fontSize: 9, color: tone.inkMuted, marginBottom: 3, fontWeight: 500 }}>내 예측</div>
                 <div style={{ fontSize: 14, fontWeight: 700, fontFamily: monoStack }}>{task.originalEstimatedMin}분</div>
               </div>
-              <div style={{ background: tone.warn, padding: 9, borderRadius: 8, textAlign: "center" }}>
-                <div style={{ fontSize: 9, color: tone.warnSoft, marginBottom: 3, fontWeight: 500 }}>AI 보정</div>
-                <div style={{ fontSize: 14, fontWeight: 700, fontFamily: monoStack, color: tone.surface }}>
+              <div style={{ background: corrected ? tone.warn : tone.surface, padding: 9, borderRadius: 8, textAlign: "center" }}>
+                <div style={{ fontSize: 9, color: corrected ? tone.warnSoft : tone.inkMuted, marginBottom: 3, fontWeight: 500 }}>AI 보정</div>
+                <div style={{ fontSize: 14, fontWeight: 700, fontFamily: monoStack, color: corrected ? tone.surface : tone.ink }}>
                   {task.adjustedEstimatedMin}분
                 </div>
               </div>
@@ -131,6 +135,11 @@ export function TaskDetailScreen({
                 <div style={{ fontSize: 14, fontWeight: 700, fontFamily: monoStack }}>{totalStudied}분</div>
               </div>
             </div>
+            {!corrected && (
+              <div style={{ fontSize: 10, color: tone.inkSubtle, marginTop: 8, lineHeight: 1.5 }}>
+                아직 학습 데이터가 부족해 보정이 적용되지 않았어요. 이 유형의 Task를 완료할수록 내 예측 대비 보정이 자동으로 적용됩니다.
+              </div>
+            )}
           </Card>
         )}
 
@@ -159,12 +168,17 @@ export function TaskDetailScreen({
         </div>
 
         {!task.completed && (
-          <div style={{ display: "flex", gap: 8, marginBottom: 18 }}>
-            <Btn variant="outline" onClick={onAddManualRecord} icon={<Plus size={13} />} fullWidth>
-              기록 추가
-            </Btn>
-            <Btn variant="primary" onClick={onStartSession} icon={<Play size={13} />} fullWidth>
-              학습 시작
+          <div style={{ marginBottom: 18 }}>
+            <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
+              <Btn variant="outline" onClick={onAddManualRecord} icon={<Plus size={13} />} fullWidth>
+                기록 추가
+              </Btn>
+              <Btn variant="primary" onClick={onStartSession} icon={<Play size={13} />} fullWidth>
+                학습 시작
+              </Btn>
+            </div>
+            <Btn variant="outline" onClick={onCompleteTask} icon={<Check size={13} />} fullWidth>
+              완료 처리
             </Btn>
           </div>
         )}

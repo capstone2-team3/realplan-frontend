@@ -60,8 +60,8 @@ export type Task = {
   importance: Importance;
   difficulty: Difficulty;
   notes?: string;
-  originalEstimatedMin: number;
-  adjustedEstimatedMin: number;
+  originalEstimatedMin: number;   // 내 예측 (userEstimated)
+  adjustedEstimatedMin: number;   // AI 보정 적용된 최종 예상시간 (finalEstimated; 보정 없으면 == originalEstimatedMin)
   remainingMin: number;
   deadline: Date;
   completed: boolean;
@@ -77,6 +77,63 @@ export type Folder = {
   id: string;
   name: string;
   isDefault: boolean;
+};
+
+// 하루 플랜 (백엔드 daily_plan 과 매핑)
+export type DailyPlanStatus = "RECOMMENDED" | "CONFIRMED" | "ENDED" | "REJECTED";
+export type PlanSourceType = "AI" | "USER" | "BOTH";
+
+export type DailyPlanSlot = {
+  slotId: string;
+  slotIndex: number;
+  timeLabel: string;
+  dailyPlanTaskId?: string;
+  taskId?: string;
+  taskName?: string;
+};
+
+export type DailyPlanTask = {
+  dailyPlanTaskId: string;
+  taskId: string;
+  taskName: string;
+  taskTypeCode: TaskTypeCode;
+  importance: Importance;
+  displayOrder: number;
+  sourceType: PlanSourceType;
+  plannedMinutes: number;
+  selected: boolean;
+};
+
+export type DailyPlan = {
+  id: string;
+  planDate: string;          // YYYY-MM-DD
+  availableMinutes: number;
+  totalMinutes: number;
+  status: DailyPlanStatus;
+  confirmedAt?: Date;
+  slots: DailyPlanSlot[];
+  tasks: DailyPlanTask[];
+};
+
+// AI 태스크 추천 (저장 없는 순위 목록)
+export type PlanRecommendationItem = {
+  rank: number;
+  taskId: string;
+  name: string;
+  remainingMin: number;
+  recommendScore: number;
+  deadlineLabel: string;
+  importanceLabel: string;
+  recommendedTimeBandLabel: string;
+  requiredFocusLevel: string;   // HIGH / MEDIUM / LOW / FLEXIBLE
+  reason: string;
+  dueToday: boolean;
+};
+export type PlanRecommendations = {
+  targetDate: string;
+  availableMinutes: number;
+  items: PlanRecommendationItem[];
+  message: string;
 };
 
 // 로그인 사용자 (백엔드 users 테이블과 매핑)
@@ -103,7 +160,7 @@ export const FILTER_LABELS: Record<FilterKey, string> = {
 
 export const FOCUS_LABELS = ["", "산만했어", "보통", "꽤 집중", "완전 몰입"];
 
-// 집중 잘 되는 시간대 (4구간). 실제로는 Analytics 데이터로 산출하지만 목업에선 Task별 mock 부여
+// 집중 잘 되는 시간대 (4구간).
 export type FocusBand = "DAWN" | "MORNING" | "AFTERNOON" | "EVENING";
 export const FOCUS_BAND_LABELS: Record<FocusBand, string> = {
   MORNING: "06–12시",
@@ -111,10 +168,20 @@ export const FOCUS_BAND_LABELS: Record<FocusBand, string> = {
   EVENING: "18–24시",
   DAWN: "00–06시",
 };
+// ⚠️ deprecated: Task 타입 → 고정 시간대 하드코딩(가짜 데이터). 실제 집중시간대는
+// 추천 API의 recommendedTimeBandLabel(태스크별 AI 계산값)을 사용한다. (HomeRecommendation 참고)
 export const TASK_FOCUS_BAND: Record<TaskTypeCode, FocusBand> = {
   TIME_BASED: "AFTERNOON",
   QUANTITY_BASED: "MORNING",
   SATISFACTION_BASED: "EVENING",
+};
+
+// 홈 화면 추천 상태. 추천된 Task 목록 + taskId별 추천 집중시간대 라벨(timeBandByTask).
+// timeBandByTask 에 없는 taskId 는 집중시간대 데이터가 아직 없는 것(cold start)으로 처리한다.
+export type HomeRecommendation = {
+  items: Task[];
+  total: number;
+  timeBandByTask: Record<string, string>;
 };
 
 // 시간표 색상 팔레트 (task별 자동 배정)

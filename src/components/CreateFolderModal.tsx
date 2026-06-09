@@ -1,35 +1,44 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Btn } from "./Btn";
 import { Modal } from "./Modal";
 import { tone } from "../theme/tokens";
 
+// 폴더 생성·이름 수정 겸용 모달.
 export function CreateFolderModal({
   open,
   onClose,
-  onCreate,
+  onSubmit,
+  initialName = "",
+  title = "새 폴더",
+  submitLabel = "생성",
 }: {
   open: boolean;
   onClose: () => void;
-  onCreate: (name: string) => void;
+  onSubmit: (name: string) => void;
+  initialName?: string;
+  title?: string;
+  submitLabel?: string;
 }) {
-  const [name, setName] = useState("");
+  const [name, setName] = useState(initialName);
+  // 열릴 때(또는 대상 폴더가 바뀔 때) 초기값으로 동기화
+  useEffect(() => {
+    if (open) setName(initialName);
+  }, [open, initialName]);
+
   return (
     <Modal
       open={open}
       onClose={onClose}
-      title="새 폴더"
+      title={title}
       footer={
         <>
           <Btn variant="outline" fullWidth onClick={onClose}>취소</Btn>
           <Btn
             fullWidth
             disabled={!name.trim()}
-            onClick={() => {
-              onCreate(name.trim());
-              setName("");
-            }}
+            onClick={() => onSubmit(name.trim())}
           >
-            생성
+            {submitLabel}
           </Btn>
         </>
       }

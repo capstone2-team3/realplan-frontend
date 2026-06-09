@@ -6,32 +6,59 @@ import { Pill } from "../components/Pill";
 import { monoStack, tone } from "../theme/tokens";
 import { TASK_TYPE_DESC, TASK_TYPE_LABELS, DIFFICULTY_LABELS } from "../types";
 import { api } from "../api";
-import type { TypeCorrections, DifficultyCorrections } from "../api/types";
+import type { DifficultyCorrections, TypeStat, FocusBucket, WeeklyStats } from "../api/types";
 
 export function AnalyticsScreen({ tasks }: { tasks: Task[] }) {
   const TYPES: TaskTypeCode[] = ["TIME_BASED", "QUANTITY_BASED", "SATISFACTION_BASED"];
   const DIFFICULTIES: Difficulty[] = ["LOW", "MEDIUM", "HIGH", "UNKNOWN"];
 
-  // 개인화 보정 계수 (서버/mock 에서 로드)
-  const [typeCorr, setTypeCorr] = useState<TypeCorrections | null>(null);
+  // Analytics 데이터 (서버/mock 에서 로드)
+  const [typeStats, setTypeStats] = useState<TypeStat[]>([]);
+  const [focusByHour, setFocusByHour] = useState<FocusBucket[]>([]);
+  const [weekly, setWeekly] = useState<WeeklyStats | null>(null);
+  // 난이도별 보정: 백엔드 엔드포인트가 없어 기본값(×1.00)만 들어온다.
   const [diffCorr, setDiffCorr] = useState<DifficultyCorrections | null>(null);
 
   useEffect(() => {
     let alive = true;
-    Promise.all([api.fetchTypeCorrections(), api.fetchDifficultyCorrections()])
-      .then(([tc, dc]) => {
+    Promise.all([
+      api.fetchTypeStats(),
+      api.fetchFocusByHour(),
+      api.fetchWeeklyStats(),
+      api.fetchDifficultyCorrections(),
+    ])
+      .then(([ts, fh, wk, dc]) => {
         if (!alive) return;
-        setTypeCorr(tc);
+        setTypeStats(ts);
+        setFocusByHour(fh);
+        setWeekly(wk);
         setDiffCorr(dc);
       })
-      .catch((e) => console.error("보정 계수 로드 실패:", e));
+      .catch((e) => console.error("Analytics 로드 실패:", e));
     return () => {
       alive = false;
     };
   }, []);
 
+  // 유형 코드 → 통계 빠른 조회
+  const statByType = (type: TaskTypeCode) => typeStats.find((t) => t.taskTypeCode === type);
+
   const allRecords = tasks.flatMap((t) => t.records);
   const totalStudyMin = allRecords.reduce((s, r) => s + r.durationMin, 0);
+
+  // 예측 정확도: 유형별 평균 오차율(|errorRatio|)을 1에서 빼 백분율로. 데이터 없으면 null.
+  const predictionAccuracy =
+    typeStats.length > 0
+      ? Math.max(
+          0,
+          Math.min(
+            100,
+            Math.round(100 * (1 - typeStats.reduce((s, t) => s + Math.abs(t.errorRatio), 0) / typeStats.length)),
+          ),
+        )
+      : null;
+  // 일일 평균 학습: 주간 총 학습시간 / 7
+  const dailyAvgMin = weekly ? Math.round(weekly.totalMinutes.current / 7) : 0;
 
   // 보정 배율에 따른 Pill 색상
   const coefVariant = (coef: number) => (coef >= 1.5 ? "warn" : coef > 1 ? "default" : "muted");
@@ -52,7 +79,7 @@ export function AnalyticsScreen({ tasks }: { tasks: Task[] }) {
               <Target size={12} color={tone.inkMuted} />
               <div style={{ fontSize: 10, color: tone.inkMuted, fontWeight: 500 }}>나의 예측 정확도</div>
             </div>
-            <div style={{ fontSize: 22, fontWeight: 700, fontFamily: monoStack }}>78%</div>
+            <div style={{ fontSize: 22, fontWeight: 700, fontFamily: monoStack }}>{predictionAccuracy ?? "—"}%</div>
           </Card>
           <Card style={{ padding: 12 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 5, marginBottom: 6 }}>
@@ -60,7 +87,7 @@ export function AnalyticsScreen({ tasks }: { tasks: Task[] }) {
               <div style={{ fontSize: 10, color: tone.inkMuted, fontWeight: 500 }}>일일 평균 학습</div>
             </div>
             <div style={{ fontSize: 22, fontWeight: 700, fontFamily: monoStack }}>
-              {Math.round(totalStudyMin / 7)}분
+              {dailyAvgMin}분
             </div>
           </Card>
           <Card style={{ padding: 12 }}>
@@ -104,8 +131,9 @@ export function AnalyticsScreen({ tasks }: { tasks: Task[] }) {
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
             {TYPES.map((type) => {
               const typeTasks = tasks.filter((t) => t.type === type);
-              const coef = typeCorr?.[type].coefficient ?? 1;
-              const samples = typeCorr?.[type].sampleCount ?? 0;
+              const stat = statByType(type);
+              const coef = stat?.biasCorrectionFactor ?? 1;
+              const samples = stat?.sampleCount ?? 0;
               return (
                 <div
                   key={type}
@@ -191,19 +219,23 @@ export function AnalyticsScreen({ tasks }: { tasks: Task[] }) {
             언제 가장 집중이 잘 되는지 확인하세요
           </div>
           <div style={{ display: "flex", alignItems: "flex-end", gap: 3, height: 100, paddingTop: 10 }}>
-            {[1.5, 2.1, 2.8, 3.4, 3.6, 3.2, 2.5, 2.0, 2.3, 3.0, 3.5, 2.9].map((v, i) => (
-              <div key={i} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
-                <div
-                  style={{
-                    width: "100%",
-                    height: `${(v / 4) * 100}%`,
-                    background: v >= 3 ? tone.accent : tone.borderStrong,
-                    borderRadius: 3,
-                  }}
-                />
-                <div style={{ fontSize: 8, color: tone.inkSubtle, fontFamily: monoStack }}>{i * 2}h</div>
-              </div>
-            ))}
+            {focusByHour.map((b, i) => {
+              const v = b.averageFocus;
+              return (
+                <div key={i} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
+                  <div
+                    style={{
+                      width: "100%",
+                      height: `${(v / 4) * 100}%`,
+                      background: v >= 3 ? tone.accent : tone.borderStrong,
+                      borderRadius: 3,
+                      minHeight: v > 0 ? 2 : 0,
+                    }}
+                  />
+                  <div style={{ fontSize: 8, color: tone.inkSubtle, fontFamily: monoStack }}>{b.startHour}h</div>
+                </div>
+              );
+            })}
           </div>
         </Card>
 
@@ -213,10 +245,11 @@ export function AnalyticsScreen({ tasks }: { tasks: Task[] }) {
             예측한 시간과 실제 소요 시간을 비교합니다
           </div>
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-            {TYPES.map((type, i) => {
-              const planned = [120, 90, 180][i];
-              const actual = [110, 130, 245][i];
-              const max = Math.max(planned, actual);
+            {TYPES.map((type) => {
+              const stat = statByType(type);
+              const planned = stat?.plannedMinutes ?? 0;
+              const actual = stat?.actualMinutes ?? 0;
+              const max = Math.max(planned, actual, 1);
               return (
                 <div key={type}>
                   <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, marginBottom: 4 }}>

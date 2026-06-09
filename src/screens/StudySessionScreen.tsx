@@ -14,12 +14,15 @@ import { TASK_TYPE_LABELS } from "../types";
 export function StudySessionScreen({
   task,
   onBack,
-  onComplete,
+  onPause,
+  onResume,
+  onEnd,
 }: {
   task: Task;
   onBack: () => void;
-  onComplete: (record: {
-    durationMin: number;
+  onPause: () => void;
+  onResume: () => void;
+  onEnd: (feedback: {
     progressLevel: 1 | 2 | 3 | 4 | 5;
     progressPercent: number;
     focusLevel: 1 | 2 | 3 | 4;
@@ -57,11 +60,10 @@ export function StudySessionScreen({
     setEndDialogOpen(true);
   };
 
-  // 진행률 → 5단계 라벨 환산 (기록 호환용)
+  // 진행률 → 5단계 라벨 환산 (기록 호환용). 소요 시간은 서버가 계산.
   const handleEnd = () => {
     if (focusLevel === null) return;
-    onComplete({
-      durationMin: Math.max(1, elapsedMin),
+    onEnd({
       progressLevel: percentToLevel(progressPercent, expectedPct),
       progressPercent,
       focusLevel,
@@ -111,11 +113,29 @@ export function StudySessionScreen({
 
         <div style={{ display: "flex", gap: 10, padding: "20px 0 30px" }}>
           {running ? (
-            <Btn variant="outline" size="lg" fullWidth onClick={() => setRunning(false)} icon={<Pause size={16} />}>
+            <Btn
+              variant="outline"
+              size="lg"
+              fullWidth
+              onClick={() => {
+                setRunning(false);
+                onPause();
+              }}
+              icon={<Pause size={16} />}
+            >
               일시정지
             </Btn>
           ) : (
-            <Btn variant="primary" size="lg" fullWidth onClick={() => setRunning(true)} icon={<Play size={16} />}>
+            <Btn
+              variant="primary"
+              size="lg"
+              fullWidth
+              onClick={() => {
+                setRunning(true);
+                onResume();
+              }}
+              icon={<Play size={16} />}
+            >
               재개
             </Btn>
           )}

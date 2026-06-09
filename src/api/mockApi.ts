@@ -3,17 +3,75 @@
 // 실제 네트워크 지연을 흉내내기 위해 약간의 delay 를 준다.
 
 import type {
-  RealPlanApi, CreateTaskInput, StudyRecordInput, TypeCorrections, DifficultyCorrections,
+  RealPlanApi, CreateTaskInput, ManualRecordInput, SessionFeedbackInput, DifficultyCorrections,
+  WeeklyStats, DailyStudyTime, TypeStat, FocusBucket,
 } from "./types";
-import type { Task, Folder, User, StudyRecord } from "../types";
+import type { Task, Folder, User, StudyRecord, DailyPlan, DailyPlanSlot, DailyPlanTask, PlanSourceType } from "../types";
 import { initialTasks, initialFolders } from "./mockData";
 import { today } from "../lib/time";
+import { slotIndexToLabel } from "../lib/schedule";
 
 const delay = (ms = 250) => new Promise((r) => setTimeout(r, ms));
 
 // 메모리 상태 (앱 새로고침 전까지 유지)
 let tasks: Task[] = initialTasks.map((t) => ({ ...t }));
 let folders: Folder[] = initialFolders.map((f) => ({ ...f }));
+// 진행 중 타이머 세션 추적 (sessionId → taskId/시작시각)
+const activeSessions: Record<string, { taskId: string; startedAt: Date }> = {};
+
+// 기록 1건을 태스크에 추가하고 잔여/완료를 갱신.
+function appendRecord(taskId: string, rec: Omit<StudyRecord, "id">) {
+  tasks = tasks.map((t) => {
+    if (t.id !== taskId) return t;
+    const record: StudyRecord = { ...rec, id: `r${Date.now()}` };
+    const remaining = Math.max(0, t.remainingMin - rec.durationMin);
+    return { ...t, records: [...t.records, record], remainingMin: remaining, completed: remaining === 0 };
+  });
+}
+
+// DailyPlan mock 상태
+const plans: Record<string, DailyPlan> = {};
+let idSeq = 1;
+
+function recalcPlanMinutes(plan: DailyPlan) {
+  plan.totalMinutes = plan.slots.filter((s) => s.taskId).length * 30;
+}
+function planTaskFor(plan: DailyPlan, taskId: string, sourceType: PlanSourceType): DailyPlanTask {
+  let pt = plan.tasks.find((t) => t.taskId === taskId);
+  if (!pt) {
+    const task = tasks.find((t) => t.id === taskId);
+    pt = {
+      dailyPlanTaskId: `dpt${idSeq++}`,
+      taskId,
+      taskName: task?.name ?? "(알 수 없음)",
+      taskTypeCode: task?.type ?? "SATISFACTION_BASED",
+      importance: task?.importance ?? "MEDIUM",
+      displayOrder: plan.tasks.length,
+      sourceType,
+      plannedMinutes: 0,
+      selected: true,
+    };
+    plan.tasks.push(pt);
+  }
+  return pt;
+}
+function assignSlotTo(plan: DailyPlan, slot: DailyPlanSlot, taskId: string | null, sourceType: PlanSourceType) {
+  if (taskId == null) {
+    slot.taskId = undefined;
+    slot.taskName = undefined;
+    slot.dailyPlanTaskId = undefined;
+  } else {
+    const pt = planTaskFor(plan, taskId, sourceType);
+    slot.taskId = taskId;
+    slot.taskName = pt.taskName;
+    slot.dailyPlanTaskId = pt.dailyPlanTaskId;
+  }
+  // 태스크별 plannedMinutes 재계산
+  for (const pt of plan.tasks) {
+    pt.plannedMinutes = plan.slots.filter((s) => s.taskId === pt.taskId).length * 30;
+  }
+  recalcPlanMinutes(plan);
+}
 
 export const mockApi: RealPlanApi = {
   async login(email) {
@@ -23,6 +81,27 @@ export const mockApi: RealPlanApi = {
   async signup(name, email) {
     await delay();
     return { name, email } as User;
+  },
+  async refresh() {
+    await delay();
+  },
+  async logout() {
+    await delay();
+  },
+  async updateProfile(input) {
+    await delay();
+    // mock 은 email 을 알 수 없으므로 비워 반환 (App 에서 기존 email 유지)
+    return { name: input.nickname ?? "", email: "" } as User;
+  },
+  async resetData() {
+    await delay();
+    tasks = [];
+    folders = [];
+  },
+  async withdraw() {
+    await delay();
+    tasks = [];
+    folders = [];
   },
 
   async fetchFolders() {
@@ -49,6 +128,11 @@ export const mockApi: RealPlanApi = {
     await delay();
     tasks = tasks.filter((t) => t.id !== id);
   },
+  async completeTask(id) {
+    await delay();
+    tasks = tasks.map((t) => (t.id === id ? { ...t, completed: true } : t));
+    return { ...tasks.find((t) => t.id === id)! };
+  },
 
   async createFolder(name) {
     await delay();
@@ -56,27 +140,211 @@ export const mockApi: RealPlanApi = {
     folders = [...folders, folder];
     return { ...folder };
   },
-
-  async addRecord(taskId, record: StudyRecordInput) {
+  async updateFolder(id, name) {
     await delay();
-    tasks = tasks.map((t) => {
-      if (t.id !== taskId) return t;
-      const now = new Date();
-      const rec: StudyRecord = {
-        id: `r${Date.now()}`,
-        startedAt: new Date(now.getTime() - record.durationMin * 60000),
-        endedAt: now,
-        durationMin: record.durationMin,
-        progressLevel: record.progressLevel,
-        progressPercent: record.progressPercent,
-        focusLevel: record.focusLevel,
-        notes: record.notes,
-        source: record.source,
-      };
-      const remaining = Math.max(0, t.remainingMin - record.durationMin);
-      return { ...t, records: [...t.records, rec], remainingMin: remaining, completed: remaining === 0 };
+    folders = folders.map((f) => (f.id === id ? { ...f, name } : f));
+    return { ...folders.find((f) => f.id === id)! };
+  },
+  async deleteFolder(id) {
+    await delay();
+    folders = folders.filter((f) => f.id !== id);
+    // 삭제 폴더의 태스크는 기본 폴더로 이동 (서버 동작 모사)
+    const def = folders.find((f) => f.isDefault);
+    if (def) tasks = tasks.map((t) => (t.folderId === id ? { ...t, folderId: def.id } : t));
+  },
+
+  async startSession(taskId) {
+    await delay();
+    const id = `s${Date.now()}`;
+    activeSessions[id] = { taskId, startedAt: new Date() };
+    return id;
+  },
+  async pauseSession() {
+    await delay();
+  },
+  async resumeSession() {
+    await delay();
+  },
+  async abandonSession(sessionId) {
+    await delay();
+    delete activeSessions[sessionId];
+  },
+  async endSession(sessionId, fb: SessionFeedbackInput) {
+    await delay();
+    const sess = activeSessions[sessionId];
+    if (!sess) return { ...tasks[0] };
+    const now = new Date();
+    const durationMin = Math.max(1, Math.round((now.getTime() - sess.startedAt.getTime()) / 60000));
+    appendRecord(sess.taskId, {
+      startedAt: sess.startedAt,
+      endedAt: now,
+      durationMin,
+      progressLevel: fb.progressLevel,
+      progressPercent: fb.progressPercent,
+      focusLevel: fb.focusLevel,
+      notes: fb.notes,
+      source: "TIMER",
+    });
+    delete activeSessions[sessionId];
+    return { ...tasks.find((t) => t.id === sess.taskId)! };
+  },
+  async addManualRecord(taskId, input: ManualRecordInput) {
+    await delay();
+    const durationMin = Math.max(
+      1,
+      Math.round((input.endedAt.getTime() - input.startedAt.getTime()) / 60000),
+    );
+    appendRecord(taskId, {
+      startedAt: input.startedAt,
+      endedAt: input.endedAt,
+      durationMin,
+      progressLevel: input.progressLevel,
+      progressPercent: input.progressPercent,
+      focusLevel: input.focusLevel,
+      notes: input.notes,
+      source: "MANUAL",
     });
     return { ...tasks.find((t) => t.id === taskId)! };
+  },
+  async fetchTaskSessions(taskId) {
+    await delay();
+    const t = tasks.find((t) => t.id === taskId);
+    return (t?.records ?? []).map((r) => ({ ...r }));
+  },
+
+  // ── DailyPlan (mock) ──
+  async createDailyPlan(planDate, slotIndexes) {
+    await delay();
+    const id = `dp${idSeq++}`;
+    const slots: DailyPlanSlot[] = [...slotIndexes]
+      .sort((a, b) => a - b)
+      .map((idx) => ({ slotId: `slot${idSeq++}`, slotIndex: idx, timeLabel: slotIndexToLabel(idx) }));
+    const plan: DailyPlan = {
+      id,
+      planDate,
+      availableMinutes: slotIndexes.length * 30,
+      totalMinutes: 0,
+      status: "RECOMMENDED",
+      slots,
+      tasks: [],
+    };
+    plans[id] = plan;
+    return structuredClone(plan);
+  },
+  async assignPlanTask(planId, taskId, slotIndexes) {
+    await delay();
+    const plan = plans[planId];
+    for (const idx of slotIndexes) {
+      const slot = plan.slots.find((s) => s.slotIndex === idx);
+      if (slot) assignSlotTo(plan, slot, taskId, "USER");
+    }
+    return structuredClone(plan);
+  },
+  async autoAssignPlan(planId, input) {
+    await delay();
+    const plan = plans[planId];
+    const empty = plan.slots.filter((s) => !s.taskId);
+    const ids = input.taskIds.slice(0, input.maxTasks ?? input.taskIds.length);
+    // 빈 슬롯을 태스크들에 순서대로 분배 (단순 fallback)
+    empty.forEach((slot, i) => {
+      const taskId = ids[i % Math.max(1, ids.length)];
+      if (taskId) assignSlotTo(plan, slot, taskId, "AI");
+    });
+    return structuredClone(plan);
+  },
+  async updateDailyPlanStatus(planId, status) {
+    await delay();
+    const plan = plans[planId];
+    plan.status = status;
+    if (status === "CONFIRMED") plan.confirmedAt = new Date();
+    return structuredClone(plan);
+  },
+  async updatePlanTask(planId, dailyPlanTaskId, patch) {
+    await delay();
+    const plan = plans[planId];
+    const pt = plan.tasks.find((t) => t.dailyPlanTaskId === dailyPlanTaskId);
+    if (pt) {
+      if (patch.isSelected !== undefined) pt.selected = patch.isSelected;
+      if (patch.displayOrder !== undefined) pt.displayOrder = patch.displayOrder;
+    }
+    return structuredClone(plan);
+  },
+  async assignPlanSlot(planId, slotId, taskId) {
+    await delay();
+    const plan = plans[planId];
+    const slot = plan.slots.find((s) => s.slotId === slotId);
+    if (slot) assignSlotTo(plan, slot, taskId, "USER");
+    return structuredClone(plan);
+  },
+  async fetchDailyPlan(date) {
+    await delay();
+    const plan = Object.values(plans).find((p) => p.planDate === date);
+    return plan ? structuredClone(plan) : null;
+  },
+  async fetchPlanRecommendations(planId) {
+    await delay();
+    const plan = plans[planId];
+    const items = tasks
+      .filter((t) => !t.completed)
+      .sort((a, b) => a.deadline.getTime() - b.deadline.getTime())
+      .map((t, i) => ({
+        rank: i + 1,
+        taskId: t.id,
+        name: t.name,
+        remainingMin: t.remainingMin,
+        recommendScore: Math.max(0.1, 1 - i * 0.1),
+        deadlineLabel: "",
+        importanceLabel: t.importance,
+        recommendedTimeBandLabel: "",
+        requiredFocusLevel: "MEDIUM",
+        reason: "mock 추천",
+        dueToday: false,
+      }));
+    return {
+      targetDate: plan?.planDate ?? "",
+      availableMinutes: plan?.availableMinutes ?? 0,
+      items,
+      message: "mock",
+    };
+  },
+  async replacePlanSlots(planId, slotIndexes) {
+    await delay();
+    const plan = plans[planId];
+    const keep = new Map(
+      plan.slots.filter((s) => slotIndexes.includes(s.slotIndex)).map((s) => [s.slotIndex, s]),
+    );
+    plan.slots = [...slotIndexes]
+      .sort((a, b) => a - b)
+      .map(
+        (idx) =>
+          keep.get(idx) ?? { slotId: `slot${idSeq++}`, slotIndex: idx, timeLabel: slotIndexToLabel(idx) },
+      );
+    plan.availableMinutes = slotIndexes.length * 30;
+    for (const pt of plan.tasks) {
+      pt.plannedMinutes = plan.slots.filter((s) => s.taskId === pt.taskId).length * 30;
+    }
+    recalcPlanMinutes(plan);
+    return structuredClone(plan);
+  },
+  async batchAssignSlots(planId, blocks) {
+    await delay();
+    const plan = plans[planId];
+    // 기존 AI 배정 초기화
+    for (const s of plan.slots) {
+      const pt = plan.tasks.find((t) => t.dailyPlanTaskId === s.dailyPlanTaskId);
+      if (pt?.sourceType === "AI") {
+        s.taskId = undefined;
+        s.taskName = undefined;
+        s.dailyPlanTaskId = undefined;
+      }
+    }
+    for (const block of blocks) {
+      for (const idx of block.slotIndexes) {
+        const slot = plan.slots.find((s) => s.slotIndex === idx);
+        if (slot) assignSlotTo(plan, slot, block.taskId, "AI");
+      }
+    }
+    return structuredClone(plan);
   },
 
   // Task 유형 자동 분류 (목업: 키워드 규칙 기반. 실제로는 AI 서비스가 분류)
@@ -93,14 +361,42 @@ export const mockApi: RealPlanApi = {
     // 기본값
     return "SATISFACTION_BASED";
   },
-  async fetchTypeCorrections() {
+  async fetchWeeklyStats(): Promise<WeeklyStats> {
     await delay();
-    const data: TypeCorrections = {
-      TIME_BASED: { coefficient: 1.0, sampleCount: 12 },
-      QUANTITY_BASED: { coefficient: 1.3, sampleCount: 8 },
-      SATISFACTION_BASED: { coefficient: 1.6, sampleCount: 5 },
+    return {
+      weekStart: "2026-06-08",
+      weekEnd: "2026-06-14",
+      totalMinutes: { current: 870, previous: 705, diff: 165 },
+      averageFocus: { current: 3.6, previous: 3.2, diff: 0.4 },
+      completedTasks: { current: 4, previous: 3, diff: 1 },
     };
-    return data;
+  },
+  async fetchDailyStudyTime(weeks = 2): Promise<DailyStudyTime> {
+    await delay();
+    const days = [120, 95, 180, 60, 200, 150, 65].map((totalMinutes, i) => {
+      const d = new Date(today);
+      d.setDate(d.getDate() - (6 - i));
+      return { date: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`, totalMinutes };
+    });
+    return { weeks, startDate: days[0].date, endDate: days[days.length - 1].date, days };
+  },
+  async fetchTypeStats(): Promise<TypeStat[]> {
+    await delay();
+    return [
+      { taskTypeId: 1, taskTypeCode: "TIME_BASED", taskTypeName: "시간형", sampleCount: 12, plannedMinutes: 120, actualMinutes: 110, errorRatio: -0.08, biasCorrectionFactor: 1.0, lastCalculatedAt: null },
+      { taskTypeId: 2, taskTypeCode: "QUANTITY_BASED", taskTypeName: "분량형", sampleCount: 8, plannedMinutes: 90, actualMinutes: 130, errorRatio: 0.44, biasCorrectionFactor: 1.3, lastCalculatedAt: null },
+      { taskTypeId: 3, taskTypeCode: "SATISFACTION_BASED", taskTypeName: "만족형", sampleCount: 5, plannedMinutes: 180, actualMinutes: 245, errorRatio: 0.36, biasCorrectionFactor: 1.6, lastCalculatedAt: null },
+    ];
+  },
+  async fetchFocusByHour(): Promise<FocusBucket[]> {
+    await delay();
+    return [1.5, 2.1, 2.8, 3.4, 3.6, 3.2, 2.5, 2.0, 2.3, 3.0, 3.5, 2.9].map((averageFocus, i) => ({
+      startHour: i * 2,
+      endHour: i * 2 + 2,
+      label: `${i * 2}-${i * 2 + 2}시`,
+      averageFocus,
+      sessionCount: 3,
+    }));
   },
   async fetchDifficultyCorrections() {
     await delay();

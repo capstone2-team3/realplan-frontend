@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { ChevronDown, ChevronLeft, ChevronRight, Info, Sparkles, X, Zap } from "lucide-react";
-import type { Folder, Task } from "../types";
+import type { Folder, Task, HomeRecommendation } from "../types";
 import { Btn } from "./Btn";
 import { Pill } from "./Pill";
 import { SLOTS_PER_HOUR, TOTAL_SLOTS, slotIndexToLabel } from "../lib/schedule";
@@ -8,7 +8,6 @@ import { buildTaskOrder, colorForTask } from "../lib/tasks";
 import { fmtMonthDayWeekday, isSameDay, startOfToday } from "../lib/time";
 import { fmtMin, fmtDday } from "../lib/format";
 import { monoStack, tone } from "../theme/tokens";
-import { FOCUS_BAND_LABELS, TASK_FOCUS_BAND } from "../types";
 
 export function ScheduleBuilder({
   date,
@@ -26,7 +25,7 @@ export function ScheduleBuilder({
   onDateChange: (d: Date, currentAssignment: Record<number, string>) => void;
   availableSlots: Set<number>;
   hasAvailability: boolean;
-  recommendation: { items: Task[]; total: number } | null;
+  recommendation: HomeRecommendation | null;
   allTasks: Task[];
   folders: Folder[];
   initialSchedule: Record<number, string>;
@@ -176,9 +175,19 @@ export function ScheduleBuilder({
           <span style={{ fontSize: 11, fontWeight: sel ? 600 : 500, color: tone.ink, display: "block", lineHeight: 1.3 }}>
             {t.name}
           </span>
-          <span style={{ fontSize: 9, color: tone.warn, fontWeight: 600, display: "block", marginTop: 2 }}>
-            🔥 {FOCUS_BAND_LABELS[TASK_FOCUS_BAND[t.type]]}
-          </span>
+          {(() => {
+            // 추천에 포함된 Task 는 AI가 계산한 실제 집중시간대를, 없으면 cold start 표시.
+            const tb = recommendation?.timeBandByTask[t.id];
+            return tb ? (
+              <span style={{ fontSize: 9, color: tone.warn, fontWeight: 600, display: "block", marginTop: 2 }}>
+                🔥 {tb}
+              </span>
+            ) : (
+              <span style={{ fontSize: 9, color: tone.inkSubtle, fontWeight: 500, display: "block", marginTop: 2 }}>
+                🕐 집중시간대 분석 전
+              </span>
+            );
+          })()}
           <span
             style={{
               fontSize: 9,
@@ -275,7 +284,7 @@ export function ScheduleBuilder({
 
           {/* Action row: 시간표 자동 완성 (추천이 있을 때만 노출) */}
           {recommendation && (
-            <div style={{ display: "flex", gap: 6, marginTop: 12, alignItems: "center" }}>
+            <div style={{ display: "flex", gap: 6, marginTop: 12, alignItems: "center", justifyContent: "flex-end" }}>
               <div style={{ display: "inline-flex", alignItems: "center", gap: 4, position: "relative" }}>
                 <Btn
                   variant="primary"
@@ -285,38 +294,41 @@ export function ScheduleBuilder({
                 >
                   시간표 자동 완성
                 </Btn>
-                <button
-                  onClick={() => setAutoFillInfoOpen((v) => !v)}
-                  style={{ background: "none", border: "none", cursor: "pointer", padding: 2, display: "flex" }}
-                >
-                  <Info size={13} color={tone.inkSubtle} />
-                </button>
-                {autoFillInfoOpen && (
-                  <div
-                    style={{
-                      position: "absolute",
-                      top: 28,
-                      right: 0,
-                      width: 230,
-                      background: tone.ink,
-                      color: tone.surface,
-                      borderRadius: 10,
-                      padding: 11,
-                      fontSize: 10.5,
-                      lineHeight: 1.6,
-                      zIndex: 30,
-                      boxShadow: "0 8px 24px rgba(0,0,0,0.25)",
-                    }}
+                <span style={{ position: "relative", display: "inline-flex" }}>
+                  <button
+                    onClick={() => setAutoFillInfoOpen((v) => !v)}
+                    style={{ background: "none", border: "none", cursor: "pointer", padding: 2, display: "flex" }}
                   >
-                    <div style={{ fontWeight: 700, marginBottom: 5, display: "flex", justifyContent: "space-between" }}>
-                      시간표 자동 완성
-                      <X size={11} style={{ cursor: "pointer" }} onClick={() => setAutoFillInfoOpen(false)} />
+                    <Info size={13} color={tone.inkSubtle} />
+                  </button>
+                  {autoFillInfoOpen && (
+                    <div
+                      style={{
+                        position: "absolute",
+                        top: "100%",
+                        right: 0,
+                        marginTop: 4,
+                        width: 230,
+                        background: tone.ink,
+                        color: tone.surface,
+                        borderRadius: 10,
+                        padding: 11,
+                        fontSize: 10.5,
+                        lineHeight: 1.6,
+                        zIndex: 30,
+                        boxShadow: "0 8px 24px rgba(0,0,0,0.25)",
+                      }}
+                    >
+                      <div style={{ fontWeight: 700, marginBottom: 5, display: "flex", justifyContent: "space-between" }}>
+                        시간표 자동 완성
+                        <X size={11} style={{ cursor: "pointer" }} onClick={() => setAutoFillInfoOpen(false)} />
+                      </div>
+                      <div style={{ opacity: 0.9 }}>
+                        추천 Task들을 비어있는 가용시간대에 자동 배치합니다. 사용자가 이미 채워놓은 슬롯은 건드리지 않습니다.
+                      </div>
                     </div>
-                    <div style={{ opacity: 0.9 }}>
-                      추천 Task들을 비어있는 가용시간대에 자동 배치합니다. 사용자가 이미 채워놓은 슬롯은 건드리지 않습니다.
-                    </div>
-                  </div>
-                )}
+                  )}
+                </span>
               </div>
             </div>
           )}

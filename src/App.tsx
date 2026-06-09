@@ -11,10 +11,9 @@ import {
   Settings as SettingsIcon,
 } from "lucide-react";
 
-import type { Screen, Task, Folder, StudyRecord, User } from "./types";
+import type { Screen, Task, Folder, StudyRecord, User, HomeRecommendation } from "./types";
 import { tone, fontStack, monoStack } from "./theme/tokens";
 import { api } from "./api";
-import { setToken } from "./api/client";
 
 import { PhoneFrame } from "./components/PhoneFrame";
 import { TaskFormModal } from "./components/TaskFormModal";
@@ -58,17 +57,36 @@ export default function App() {
     };
   }, [currentUser]);
 
+  // 태스크 상세 진입 시 학습 기록(세션) 목록을 불러와 해당 태스크에 채운다.
+  useEffect(() => {
+    if (screen.name !== "taskDetail") return;
+    const taskId = screen.taskId;
+    let alive = true;
+    api.fetchTaskSessions(taskId)
+      .then((records) => {
+        if (alive) setTasks((prev) => prev.map((t) => (t.id === taskId ? { ...t, records } : t)));
+      })
+      .catch((e) => console.error("학습 기록 로드 실패:", e));
+    return () => {
+      alive = false;
+    };
+  }, [screen]);
+
   // Modals
   const [taskFormOpen, setTaskFormOpen] = useState(false);
   const [editingTaskId, setEditingTaskId] = useState<string | null>(null);
   const [defaultFolderForCreate, setDefaultFolderForCreate] = useState("default");
   const [createFolderOpen, setCreateFolderOpen] = useState(false);
+  const [renameFolderId, setRenameFolderId] = useState<string | null>(null);
   const [manualRecordOpen, setManualRecordOpen] = useState(false);
   const [manualRecordTaskId, setManualRecordTaskId] = useState<string | null>(null);
+  // 진행 중 타이머 세션
+  const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
+  const [activeSessionTaskId, setActiveSessionTaskId] = useState<string | null>(null);
   const [deleteConfirmTaskId, setDeleteConfirmTaskId] = useState<string | null>(null);
 
   // Home state (recommendation only; availability moved into HomeScreen)
-  const [recommendation, setRecommendation] = useState<{ items: Task[]; total: number } | null>(null);
+  const [recommendation, setRecommendation] = useState<HomeRecommendation | null>(null);
 
   const navigate = (s: Screen) => {
     // taskDetail로 진입할 때, 현재 화면이 탭 화면이면 그걸 기억
@@ -109,6 +127,31 @@ export default function App() {
     }
   };
 
+  const handleRenameFolder = async (id: string, name: string) => {
+    try {
+      const updated = await api.updateFolder(id, name);
+      setFolders((prev) => prev.map((f) => (f.id === id ? updated : f)));
+    } catch (e) {
+      console.error("폴더 수정 실패:", e);
+    } finally {
+      setRenameFolderId(null);
+    }
+  };
+
+  const handleDeleteFolder = async (id: string) => {
+    try {
+      await api.deleteFolder(id);
+      setFolders((prev) => prev.filter((f) => f.id !== id));
+      // 삭제된 폴더의 태스크는 서버에서 기본 폴더로 이동됨 → 로컬도 반영
+      const def = folders.find((f) => f.isDefault);
+      if (def) {
+        setTasks((prev) => prev.map((t) => (t.folderId === id ? { ...t, folderId: def.id } : t)));
+      }
+    } catch (e) {
+      console.error("폴더 삭제 실패:", e);
+    }
+  };
+
   const handleDeleteTask = async (taskId: string) => {
     try {
       await api.deleteTask(taskId);
@@ -123,42 +166,77 @@ export default function App() {
     }
   };
 
-  const handleStartSession = (taskId: string) => {
-    setScreen({ name: "studySession", taskId });
+  const handleStartSession = async (taskId: string) => {
+    try {
+      const sessionId = await api.startSession(taskId);
+      setActiveSessionId(sessionId);
+      setActiveSessionTaskId(taskId);
+      setScreen({ name: "studySession", taskId });
+    } catch (e) {
+      // 이미 ACTIVE/PAUSED 세션이 있으면 400 — 화면 전환하지 않음
+      console.error("세션 시작 실패:", e);
+    }
   };
 
-  const handleCompleteSession = async (
-    taskId: string,
-    record: {
-      durationMin: number;
-      progressLevel: 1 | 2 | 3 | 4 | 5;
-      progressPercent: number;
-      focusLevel: 1 | 2 | 3 | 4;
-      notes?: string;
-    },
-  ) => {
+  const handlePauseSession = () => {
+    if (activeSessionId) api.pauseSession(activeSessionId).catch((e) => console.error("일시정지 실패:", e));
+  };
+  const handleResumeSession = () => {
+    if (activeSessionId) api.resumeSession(activeSessionId).catch((e) => console.error("재개 실패:", e));
+  };
+
+  // 종료하지 않고 세션 화면을 벗어날 때: 서버 세션을 무효화하고 상세로 복귀.
+  const handleAbandonSession = (taskId: string) => {
+    if (activeSessionId) {
+      api.abandonSession(activeSessionId).catch((e) => console.error("세션 무효화 실패:", e));
+    }
+    setActiveSessionId(null);
+    setActiveSessionTaskId(null);
+    navigate({ name: "taskDetail", taskId });
+  };
+
+  const handleCompleteTask = async (taskId: string) => {
     try {
-      const updated = await api.addRecord(taskId, { ...record, source: "TIMER" });
+      const updated = await api.completeTask(taskId);
       setTasks((prev) => prev.map((t) => (t.id === taskId ? updated : t)));
     } catch (e) {
-      console.error("세션 기록 저장 실패:", e);
+      console.error("Task 완료 처리 실패:", e);
+    }
+  };
+
+  const handleEndSession = async (feedback: {
+    progressLevel: 1 | 2 | 3 | 4 | 5;
+    progressPercent: number;
+    focusLevel: 1 | 2 | 3 | 4;
+    notes?: string;
+  }) => {
+    const taskId = activeSessionTaskId;
+    try {
+      if (activeSessionId) {
+        const updated = await api.endSession(activeSessionId, feedback);
+        setTasks((prev) => prev.map((t) => (t.id === updated.id ? updated : t)));
+      }
+    } catch (e) {
+      console.error("세션 종료 실패:", e);
     } finally {
-      setScreen({ name: "taskDetail", taskId });
+      setActiveSessionId(null);
+      setActiveSessionTaskId(null);
+      if (taskId) setScreen({ name: "taskDetail", taskId });
     }
   };
 
   const handleAddManualRecord = async (
     taskId: string,
-    record: Omit<StudyRecord, "id" | "startedAt" | "endedAt" | "source">,
+    record: Omit<StudyRecord, "id" | "durationMin" | "source">,
   ) => {
     try {
-      const updated = await api.addRecord(taskId, {
-        durationMin: record.durationMin,
+      const updated = await api.addManualRecord(taskId, {
+        startedAt: record.startedAt,
+        endedAt: record.endedAt,
         progressLevel: record.progressLevel,
         progressPercent: record.progressPercent,
         focusLevel: record.focusLevel,
         notes: record.notes,
-        source: "MANUAL",
       });
       setTasks((prev) => prev.map((t) => (t.id === taskId ? updated : t)));
     } catch (e) {
@@ -252,6 +330,8 @@ export default function App() {
                   setTaskFormOpen(true);
                 }}
                 onDeleteTask={(taskId) => setDeleteConfirmTaskId(taskId)}
+                onRenameFolder={(folderId) => setRenameFolderId(folderId)}
+                onDeleteFolder={(folderId) => handleDeleteFolder(folderId)}
               />
             )}
             {screen.name === "taskDetail" && currentTask && (
@@ -267,13 +347,16 @@ export default function App() {
                   setEditingTaskId(currentTask.id);
                   setTaskFormOpen(true);
                 }}
+                onCompleteTask={() => handleCompleteTask(currentTask.id)}
               />
             )}
             {screen.name === "studySession" && currentTask && (
               <StudySessionScreen
                 task={currentTask}
-                onBack={() => navigate({ name: "taskDetail", taskId: currentTask.id })}
-                onComplete={(record) => handleCompleteSession(currentTask.id, record)}
+                onBack={() => handleAbandonSession(currentTask.id)}
+                onPause={handlePauseSession}
+                onResume={handleResumeSession}
+                onEnd={(feedback) => handleEndSession(feedback)}
               />
             )}
             {screen.name === "analytics" && <AnalyticsScreen tasks={tasks} />}
@@ -281,12 +364,46 @@ export default function App() {
               <SettingsScreen
                 initialName={currentUser.name}
                 initialEmail={currentUser.email}
-                onLogout={() => {
-                  setToken(null);
-                  setCurrentUser(null);
-                  setTasks([]);
-                  setFolders([]);
-                  setScreen({ name: "home" });
+                onLogout={async () => {
+                  try {
+                    await api.logout();
+                  } finally {
+                    setCurrentUser(null);
+                    setTasks([]);
+                    setFolders([]);
+                    setScreen({ name: "home" });
+                  }
+                }}
+                onUpdateProfile={async (nickname, password) => {
+                  const u = await api.updateProfile({ nickname, password });
+                  // 응답에 email 이 없으면(mock) 기존 email 유지
+                  setCurrentUser({ name: u.name, email: u.email || currentUser.email });
+                }}
+                onResetData={async () => {
+                  try {
+                    await api.resetData();
+                    // 서버는 초기화 후에도 기본 폴더를 유지하므로, 로컬을 비우지 말고
+                    // 재로그인과 동일하게 서버 상태를 다시 불러온다. (folders 가 []이면 Tasks 화면이 크래시)
+                    const [f, t] = await Promise.all([api.fetchFolders(), api.fetchTasks()]);
+                    setFolders(f);
+                    setTasks(t);
+                  } catch (e) {
+                    console.error("데이터 초기화 후 재로드 실패:", e);
+                    setTasks([]);
+                    setFolders([]);
+                  } finally {
+                    setScreen({ name: "home" });
+                  }
+                }}
+                onWithdraw={async () => {
+                  try {
+                    await api.withdraw();
+                  } finally {
+                    setCurrentUser(null);
+                    setTasks([]);
+                    setFolders([]);
+                    setScreen({ name: "home" });
+                  }
                 }}
               />
             )}
@@ -346,7 +463,18 @@ export default function App() {
         <CreateFolderModal
           open={createFolderOpen}
           onClose={() => setCreateFolderOpen(false)}
-          onCreate={handleCreateFolder}
+          onSubmit={handleCreateFolder}
+        />
+
+        <CreateFolderModal
+          open={renameFolderId !== null}
+          onClose={() => setRenameFolderId(null)}
+          onSubmit={(name) => {
+            if (renameFolderId) handleRenameFolder(renameFolderId, name);
+          }}
+          initialName={folders.find((f) => f.id === renameFolderId)?.name ?? ""}
+          title="폴더명 수정"
+          submitLabel="저장"
         />
 
         <ManualRecordModal

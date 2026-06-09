@@ -4,10 +4,12 @@
 //   성공: { "success": true,  "data": {...}, "meta": {...} }
 //   실패: { "success": false, "error": { "code", "message" } }
 //
-// 인증: Authorization: Bearer {JWT} (통합 설계서 §4)
+// 인증: Authorization: Bearer {accessToken}
+// 토큰 재발급: accessToken 만료(401) 시 refreshToken 으로 /auth/refresh 자동 호출.
 
-// 합치는 날: .env 에 VITE_API_BASE_URL=https://{host}/api/v1 지정
-export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "/api/v1";
+// Swagger 엔드포인트가 /api/auth/... 형태이므로 base 는 /api.
+// .env 에 VITE_API_BASE_URL=http://{host}/api 지정.
+export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "/api";
 
 // 공통 응답 래퍼
 export type ApiEnvelope<T> = {
@@ -26,22 +28,76 @@ export class ApiError extends Error {
   }
 }
 
-// JWT 토큰 보관 (메모리 + localStorage). 로그인 시 setToken 으로 저장.
-let accessToken: string | null =
-  typeof localStorage !== "undefined" ? localStorage.getItem("realplan_token") : null;
+// ── 토큰 보관 (메모리 + localStorage) ──
+const ACCESS_KEY = "realplan_token";
+const REFRESH_KEY = "realplan_refresh_token";
+const ls = typeof localStorage !== "undefined" ? localStorage : null;
 
-export function setToken(token: string | null) {
-  accessToken = token;
-  if (typeof localStorage !== "undefined") {
-    if (token) localStorage.setItem("realplan_token", token);
-    else localStorage.removeItem("realplan_token");
+let accessToken: string | null = ls?.getItem(ACCESS_KEY) ?? null;
+let refreshToken: string | null = ls?.getItem(REFRESH_KEY) ?? null;
+
+export function setTokens(access: string | null, refresh?: string | null) {
+  accessToken = access;
+  if (ls) access ? ls.setItem(ACCESS_KEY, access) : ls.removeItem(ACCESS_KEY);
+  if (refresh !== undefined) {
+    refreshToken = refresh;
+    if (ls) refresh ? ls.setItem(REFRESH_KEY, refresh) : ls.removeItem(REFRESH_KEY);
   }
+}
+export function clearTokens() {
+  setTokens(null, null);
 }
 export function getToken() {
   return accessToken;
 }
+export function getRefreshToken() {
+  return refreshToken;
+}
 
-async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
+// accessToken 만료 시 refreshToken 으로 새 토큰을 받아온다.
+// /auth/refresh 자체는 envelope 로 토큰을 돌려준다고 가정.
+//
+// 동시에 여러 요청이 401 을 받으면 각자 재발급을 호출하게 되는데, 백엔드가 refresh 토큰을
+// 회전(rotation)시키면 두 번째 재발급은 이미 무효화된 토큰을 보내 실패(500)하고 세션이 깨진다.
+// 따라서 진행 중인 재발급이 있으면 그 Promise 를 공유해 재발급을 단 한 번만 수행한다.
+let refreshPromise: Promise<boolean> | null = null;
+
+function tryRefresh(): Promise<boolean> {
+  if (!refreshToken) return Promise.resolve(false);
+  if (!refreshPromise) {
+    refreshPromise = doRefresh().finally(() => {
+      refreshPromise = null;
+    });
+  }
+  return refreshPromise;
+}
+
+async function doRefresh(): Promise<boolean> {
+  if (!refreshToken) return false;
+  try {
+    const res = await fetch(`${API_BASE_URL}/auth/refresh`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ refreshToken }),
+    });
+    const json = (await res.json()) as ApiEnvelope<{
+      accessToken: string;
+      refreshToken: string;
+    }>;
+    if (!res.ok || !json.success || !json.data) return false;
+    setTokens(json.data.accessToken, json.data.refreshToken);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function request<T>(
+  method: string,
+  path: string,
+  body?: unknown,
+  retry = true,
+): Promise<T> {
   const headers: Record<string, string> = { "Content-Type": "application/json" };
   if (accessToken) headers["Authorization"] = `Bearer ${accessToken}`;
 
@@ -50,6 +106,12 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
     headers,
     body: body !== undefined ? JSON.stringify(body) : undefined,
   });
+
+  // accessToken 만료: 한 번만 재발급 후 재시도. /auth/* 호출은 재발급 대상에서 제외.
+  if (res.status === 401 && retry && !path.startsWith("/auth/")) {
+    if (await tryRefresh()) return request<T>(method, path, body, false);
+    clearTokens();
+  }
 
   let json: ApiEnvelope<T>;
   try {

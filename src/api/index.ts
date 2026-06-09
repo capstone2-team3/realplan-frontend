@@ -15,4 +15,4 @@ const USE_REAL = import.meta.env.VITE_USE_REAL_API === "true";
 
 export const api = USE_REAL ? realApi : mockApi;
 
-export type { RealPlanApi, CreateTaskInput, StudyRecordInput } from "./types";
+export type { RealPlanApi, CreateTaskInput, SessionFeedbackInput, ManualRecordInput } from "./types";

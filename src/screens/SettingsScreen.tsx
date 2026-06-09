@@ -1,6 +1,8 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { AlertCircle, ArrowDown, ArrowUp, Edit2, Info, Trash2 } from "lucide-react";
 import type { Task, User } from "../types";
+import { api } from "../api";
+import type { WeeklyStats, DailyStudyTime } from "../api/types";
 import { Btn } from "../components/Btn";
 import { Card } from "../components/Card";
 import { ConfirmDialog } from "../components/ConfirmDialog";
@@ -13,10 +15,16 @@ export function SettingsScreen({
   initialName,
   initialEmail,
   onLogout,
+  onUpdateProfile,
+  onResetData,
+  onWithdraw,
 }: {
   initialName: string;
   initialEmail: string;
   onLogout: () => void;
+  onUpdateProfile: (nickname: string, password?: string) => Promise<void>;
+  onResetData: () => Promise<void>;
+  onWithdraw: () => Promise<void>;
 }) {
   // 사용자 정보 (편집 가능)
   const [name, setName] = useState(initialName);
@@ -27,18 +35,38 @@ export function SettingsScreen({
   const [draftPasswordConfirm, setDraftPasswordConfirm] = useState("");
   const [editError, setEditError] = useState<string | null>(null);
   const [resetOpen, setResetOpen] = useState(false);
+  const [withdrawOpen, setWithdrawOpen] = useState(false);
   const [logoutOpen, setLogoutOpen] = useState(false);
+  const [saving, setSaving] = useState(false);
 
-  // Mock weekly stats (avgFocus는 5.0 만점)
+  // 주간 통계 + 일별 학습시간 (서버/mock 에서 로드)
+  const [weekly, setWeekly] = useState<WeeklyStats | null>(null);
+  const [daily, setDaily] = useState<DailyStudyTime | null>(null);
+
+  useEffect(() => {
+    let alive = true;
+    Promise.all([api.fetchWeeklyStats(), api.fetchDailyStudyTime(1)])
+      .then(([wk, dl]) => {
+        if (!alive) return;
+        setWeekly(wk);
+        setDaily(dl);
+      })
+      .catch((e) => console.error("주간 통계 로드 실패:", e));
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  // 주간 지표 (avgFocus 는 1~4 스케일, 데이터 없으면 0)
   const thisWeek = {
-    studyMin: 14 * 60 + 30,
-    avgFocus: 3.6,
-    completedTasks: 4,
+    studyMin: weekly?.totalMinutes.current ?? 0,
+    avgFocus: weekly?.averageFocus.current ?? 0,
+    completedTasks: weekly?.completedTasks.current ?? 0,
   };
   const lastWeek = {
-    studyMin: 11 * 60 + 45,
-    avgFocus: 3.2,
-    completedTasks: 3,
+    studyMin: weekly?.totalMinutes.previous ?? 0,
+    avgFocus: weekly?.averageFocus.previous ?? 0,
+    completedTasks: weekly?.completedTasks.previous ?? 0,
   };
 
   const fmtHM = (m: number) => {
@@ -73,10 +101,15 @@ export function SettingsScreen({
     );
   };
 
-  // 주간 일별 학습시간 (mock)
-  const dailyMinutes = [120, 95, 180, 60, 200, 150, 65];
-  const dayLabels = ["월", "화", "수", "목", "금", "토", "일"];
-  const maxDaily = Math.max(...dailyMinutes);
+  // 주간 일별 학습시간 (최근 7일). 날짜에서 요일 라벨을 계산한다.
+  const recentDays = (daily?.days ?? []).slice(-7);
+  const dailyMinutes = recentDays.map((d) => d.totalMinutes);
+  const WEEKDAY = ["일", "월", "화", "수", "목", "금", "토"];
+  const dayLabels = recentDays.map((d) => {
+    const [y, m, day] = d.date.split("-").map(Number);
+    return WEEKDAY[new Date(y, m - 1, day).getDay()];
+  });
+  const maxDaily = Math.max(...dailyMinutes, 1);
 
   return (
     <div style={{ paddingBottom: 24 }}>
@@ -190,7 +223,7 @@ export function SettingsScreen({
               },
               {
                 label: "평균 집중도",
-                value: `${thisWeek.avgFocus.toFixed(1)} / 5.0`,
+                value: `${thisWeek.avgFocus.toFixed(1)} / 4.0`,
                 delta: renderDelta(thisWeek.avgFocus, lastWeek.avgFocus, "", true),
               },
               {
@@ -239,6 +272,12 @@ export function SettingsScreen({
           <Btn variant="danger" size="sm" icon={<Trash2 size={12} />} onClick={() => setResetOpen(true)}>
             모든 데이터 초기화
           </Btn>
+          <div style={{ fontSize: 12, color: tone.inkMuted, margin: "14px 0 12px", lineHeight: 1.5 }}>
+            회원탈퇴 시 데이터와 계정이 모두 삭제됩니다.
+          </div>
+          <Btn variant="danger" size="sm" icon={<Trash2 size={12} />} onClick={() => setWithdrawOpen(true)}>
+            회원탈퇴
+          </Btn>
         </Card>
 
         <button
@@ -271,8 +310,8 @@ export function SettingsScreen({
             <Btn variant="outline" fullWidth onClick={() => setEditOpen(false)}>취소</Btn>
             <Btn
               fullWidth
-              disabled={!draftName.trim()}
-              onClick={() => {
+              disabled={!draftName.trim() || saving}
+              onClick={async () => {
                 setEditError(null);
                 // 비밀번호는 입력했을 때만 변경 (둘 다 비어있으면 비밀번호 변경 안 함)
                 if (draftPassword || draftPasswordConfirm) {
@@ -285,12 +324,19 @@ export function SettingsScreen({
                     return;
                   }
                 }
-                setName(draftName.trim());
-                // (목업) 비밀번호는 실제 저장하지 않음
-                setEditOpen(false);
+                setSaving(true);
+                try {
+                  await onUpdateProfile(draftName.trim(), draftPassword || undefined);
+                  setName(draftName.trim());
+                  setEditOpen(false);
+                } catch {
+                  setEditError("프로필 저장에 실패했습니다. 다시 시도해주세요.");
+                } finally {
+                  setSaving(false);
+                }
               }}
             >
-              저장
+              {saving ? "저장 중…" : "저장"}
             </Btn>
           </>
         }
@@ -416,7 +462,24 @@ export function SettingsScreen({
         confirmLabel="초기화"
         variant="danger"
         onCancel={() => setResetOpen(false)}
-        onConfirm={() => setResetOpen(false)}
+        onConfirm={async () => {
+          setResetOpen(false);
+          await onResetData();
+        }}
+      />
+
+      {/* Withdraw confirm modal */}
+      <ConfirmDialog
+        open={withdrawOpen}
+        title="회원탈퇴"
+        message="정말로 탈퇴하시겠습니까? 모든 데이터와 계정이 영구 삭제되며 되돌릴 수 없습니다."
+        confirmLabel="회원탈퇴"
+        variant="danger"
+        onCancel={() => setWithdrawOpen(false)}
+        onConfirm={async () => {
+          setWithdrawOpen(false);
+          await onWithdraw();
+        }}
       />
 
       {/* Logout confirm modal */}

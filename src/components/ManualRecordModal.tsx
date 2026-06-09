@@ -16,15 +16,19 @@ export function ManualRecordModal({
   open: boolean;
   task: Task | null;
   onClose: () => void;
-  onSave: (rec: Omit<StudyRecord, "id" | "startedAt" | "endedAt" | "source">) => void;
+  onSave: (rec: Omit<StudyRecord, "id" | "durationMin" | "source">) => void;
 }) {
-  const [durationMin, setDurationMin] = useState("");
+  const [startedAt, setStartedAt] = useState("");
+  const [endedAt, setEndedAt] = useState("");
   const [progressPercent, setProgressPercent] = useState(0);
   const [progressTouched, setProgressTouched] = useState(false);
   const [focusLevel, setFocusLevel] = useState<1 | 2 | 3 | 4 | null>(null);
   const [notes, setNotes] = useState("");
 
-  const dur = parseInt(durationMin) || 0;
+  const startDate = startedAt ? new Date(startedAt) : null;
+  const endDate = endedAt ? new Date(endedAt) : null;
+  const validRange = !!(startDate && endDate && endDate > startDate);
+  const dur = validRange ? Math.round((endDate!.getTime() - startDate!.getTime()) / 60000) : 0;
   const estimated = task?.adjustedEstimatedMin ?? 0;
   // 이번에 입력한 수행 시간 기준 "예상 진행률" (세션 종료의 expectedPct 와 동일 개념)
   const expectedPct = estimated > 0 ? Math.round((dur / estimated) * 100) : 0;
@@ -36,7 +40,8 @@ export function ManualRecordModal({
   const displayedPercent = progressTouched ? progressPercent : Math.min(100, Math.max(0, expectedPct));
 
   const reset = () => {
-    setDurationMin("");
+    setStartedAt("");
+    setEndedAt("");
     setProgressPercent(0);
     setProgressTouched(false);
     setFocusLevel(null);
@@ -44,9 +49,10 @@ export function ManualRecordModal({
   };
 
   const handleSave = () => {
-    if (!durationMin || focusLevel === null) return;
+    if (!validRange || focusLevel === null) return;
     onSave({
-      durationMin: dur,
+      startedAt: startDate!,
+      endedAt: endDate!,
       progressLevel: percentToLevel(displayedPercent, expectedPct),
       progressPercent: displayedPercent,
       focusLevel,
@@ -63,34 +69,66 @@ export function ManualRecordModal({
       footer={
         <>
           <Btn variant="outline" fullWidth onClick={onClose}>취소</Btn>
-          <Btn fullWidth disabled={!durationMin || focusLevel === null} onClick={handleSave}>
+          <Btn fullWidth disabled={!validRange || focusLevel === null} onClick={handleSave}>
             저장
           </Btn>
         </>
       }
     >
       <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-        <div>
-          <div style={{ fontSize: 11, color: tone.inkMuted, marginBottom: 5, fontWeight: 500 }}>
-            수행 시간 (분)
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+          <div>
+            <div style={{ fontSize: 11, color: tone.inkMuted, marginBottom: 5, fontWeight: 500 }}>
+              시작 시각
+            </div>
+            <input
+              type="datetime-local"
+              value={startedAt}
+              onChange={(e) => setStartedAt(e.target.value)}
+              style={{
+                width: "100%",
+                padding: "10px 12px",
+                fontSize: 13,
+                background: tone.surface,
+                border: `1px solid ${tone.border}`,
+                borderRadius: 8,
+                fontFamily: monoStack,
+                outline: "none",
+                boxSizing: "border-box",
+              }}
+            />
           </div>
-          <input
-            type="number"
-            value={durationMin}
-            onChange={(e) => setDurationMin(e.target.value)}
-            placeholder="45"
-            style={{
-              width: "100%",
-              padding: "10px 12px",
-              fontSize: 13,
-              background: tone.surface,
-              border: `1px solid ${tone.border}`,
-              borderRadius: 8,
-              fontFamily: monoStack,
-              outline: "none",
-              boxSizing: "border-box",
-            }}
-          />
+          <div>
+            <div style={{ fontSize: 11, color: tone.inkMuted, marginBottom: 5, fontWeight: 500 }}>
+              종료 시각
+            </div>
+            <input
+              type="datetime-local"
+              value={endedAt}
+              onChange={(e) => setEndedAt(e.target.value)}
+              style={{
+                width: "100%",
+                padding: "10px 12px",
+                fontSize: 13,
+                background: tone.surface,
+                border: `1px solid ${tone.border}`,
+                borderRadius: 8,
+                fontFamily: monoStack,
+                outline: "none",
+                boxSizing: "border-box",
+              }}
+            />
+          </div>
+          {startDate && endDate && endDate <= startDate && (
+            <div style={{ gridColumn: "1 / -1", fontSize: 11, color: tone.danger }}>
+              종료 시각은 시작 시각보다 뒤여야 합니다.
+            </div>
+          )}
+          {validRange && (
+            <div style={{ gridColumn: "1 / -1", fontSize: 11, color: tone.inkMuted }}>
+              수행 시간: {fmtMin(dur)}
+            </div>
+          )}
         </div>
 
         <ProgressSliderWithFlags

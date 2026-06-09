@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { ArrowUpDown, Calendar, Clock, Edit2, Filter as FilterIcon, Folder as FolderIcon, MoreVertical, Plus, Trash2 } from "lucide-react";
 import type { FilterKey, Folder, Screen, SortKey, Task } from "../types";
 import { ActionSheet } from "../components/ActionSheet";
@@ -21,6 +21,8 @@ export function TasksScreen({
   onCreateFolder,
   onEditTask,
   onDeleteTask,
+  onRenameFolder,
+  onDeleteFolder,
 }: {
   tasks: Task[];
   folders: Folder[];
@@ -29,8 +31,20 @@ export function TasksScreen({
   onCreateFolder: () => void;
   onEditTask: (taskId: string) => void;
   onDeleteTask: (taskId: string) => void;
+  onRenameFolder: (folderId: string) => void;
+  onDeleteFolder: (folderId: string) => void;
 }) {
-  const [activeFolder, setActiveFolder] = useState(folders[0].id);
+  const [activeFolder, setActiveFolder] = useState(folders[0]?.id);
+  const [folderMenuOpen, setFolderMenuOpen] = useState(false);
+
+  // 활성 폴더가 목록에서 사라지면(삭제 등) 첫 폴더로 복귀
+  useEffect(() => {
+    if (!folders.some((f) => f.id === activeFolder)) {
+      setActiveFolder(folders[0]?.id);
+    }
+  }, [folders, activeFolder]);
+
+  const activeFolderObj = folders.find((f) => f.id === activeFolder);
   const [sortKey, setSortKey] = useState<SortKey>("RECENT");
   const [filterKey, setFilterKey] = useState<FilterKey>("ALL");
   const [sortSheetOpen, setSortSheetOpen] = useState(false);
@@ -80,7 +94,7 @@ export function TasksScreen({
           return (
             <button
               key={f.id}
-              onClick={() => setActiveFolder(f.id)}
+              onClick={() => (isActive ? setFolderMenuOpen(true) : setActiveFolder(f.id))}
               style={{
                 padding: "7px 12px",
                 borderRadius: 999,
@@ -99,6 +113,7 @@ export function TasksScreen({
             >
               <FolderIcon size={11} />
               {f.name}
+              {isActive && <MoreVertical size={11} style={{ marginLeft: 1, opacity: 0.7 }} />}
             </button>
           );
         })}
@@ -267,6 +282,33 @@ export function TasksScreen({
           label: FILTER_LABELS[k] + (filterKey === k ? "  ✓" : ""),
           onClick: () => setFilterKey(k),
         }))}
+      />
+
+      {/* Folder menu (활성 폴더 탭을 다시 탭하면 열림) */}
+      <ActionSheet
+        open={folderMenuOpen}
+        onClose={() => setFolderMenuOpen(false)}
+        actions={[
+          {
+            label: "폴더명 수정",
+            icon: <Edit2 size={15} />,
+            onClick: () => {
+              if (activeFolder) onRenameFolder(activeFolder);
+            },
+          },
+          ...(activeFolderObj && !activeFolderObj.isDefault
+            ? [
+                {
+                  label: "폴더 삭제",
+                  icon: <Trash2 size={15} />,
+                  danger: true,
+                  onClick: () => {
+                    if (activeFolder) onDeleteFolder(activeFolder);
+                  },
+                },
+              ]
+            : []),
+        ]}
       />
 
       {/* Task ⋮ menu */}
