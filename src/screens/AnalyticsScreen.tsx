@@ -6,7 +6,7 @@ import { Pill } from "../components/Pill";
 import { monoStack, tone } from "../theme/tokens";
 import { TASK_TYPE_DESC, TASK_TYPE_LABELS, DIFFICULTY_LABELS } from "../types";
 import { api } from "../api";
-import type { DifficultyCorrections, TypeStat, FocusBucket, WeeklyStats } from "../api/types";
+import type { DifficultyCorrections, TypeStat, FocusBucket, WeeklyStats, DailyStudyTime } from "../api/types";
 
 export function AnalyticsScreen({ tasks }: { tasks: Task[] }) {
   const TYPES: TaskTypeCode[] = ["TIME_BASED", "QUANTITY_BASED", "SATISFACTION_BASED"];
@@ -16,6 +16,8 @@ export function AnalyticsScreen({ tasks }: { tasks: Task[] }) {
   const [typeStats, setTypeStats] = useState<TypeStat[]>([]);
   const [focusByHour, setFocusByHour] = useState<FocusBucket[]>([]);
   const [weekly, setWeekly] = useState<WeeklyStats | null>(null);
+  // 평균 세션 계산용: 최근 4주 일별 학습시간 (총 학습분 합산).
+  const [daily, setDaily] = useState<DailyStudyTime | null>(null);
   // 난이도별 보정: 백엔드 엔드포인트가 없어 기본값(×1.00)만 들어온다.
   const [diffCorr, setDiffCorr] = useState<DifficultyCorrections | null>(null);
 
@@ -26,13 +28,15 @@ export function AnalyticsScreen({ tasks }: { tasks: Task[] }) {
       api.fetchFocusByHour(),
       api.fetchWeeklyStats(),
       api.fetchDifficultyCorrections(),
+      api.fetchDailyStudyTime(4),
     ])
-      .then(([ts, fh, wk, dc]) => {
+      .then(([ts, fh, wk, dc, dl]) => {
         if (!alive) return;
         setTypeStats(ts);
         setFocusByHour(fh);
         setWeekly(wk);
         setDiffCorr(dc);
+        setDaily(dl);
       })
       .catch((e) => console.error("Analytics 로드 실패:", e));
     return () => {
@@ -42,9 +46,6 @@ export function AnalyticsScreen({ tasks }: { tasks: Task[] }) {
 
   // 유형 코드 → 통계 빠른 조회
   const statByType = (type: TaskTypeCode) => typeStats.find((t) => t.taskTypeCode === type);
-
-  const allRecords = tasks.flatMap((t) => t.records);
-  const totalStudyMin = allRecords.reduce((s, r) => s + r.durationMin, 0);
 
   // 예측 정확도: 유형별 평균 오차율(|errorRatio|)을 1에서 빼 백분율로. 데이터 없으면 null.
   const predictionAccuracy =
@@ -59,6 +60,10 @@ export function AnalyticsScreen({ tasks }: { tasks: Task[] }) {
       : null;
   // 일일 평균 학습: 주간 총 학습시간 / 7
   const dailyAvgMin = weekly ? Math.round(weekly.totalMinutes.current / 7) : 0;
+  // 평균 세션: 최근 4주 총 학습시간 / 총 세션 수. 수동 기록(MANUAL)·타이머 모두 ENDED 세션이라 함께 반영된다.
+  const totalSessions = focusByHour.reduce((s, b) => s + b.sessionCount, 0);
+  const totalMinutes4w = daily ? daily.days.reduce((s, d) => s + d.totalMinutes, 0) : 0;
+  const avgSessionMin = totalSessions > 0 ? Math.round(totalMinutes4w / totalSessions) : 0;
 
   // 보정 배율에 따른 Pill 색상
   const coefVariant = (coef: number) => (coef >= 1.5 ? "warn" : coef > 1 ? "default" : "muted");
@@ -96,7 +101,7 @@ export function AnalyticsScreen({ tasks }: { tasks: Task[] }) {
               <div style={{ fontSize: 10, color: tone.inkMuted, fontWeight: 500 }}>평균 세션</div>
             </div>
             <div style={{ fontSize: 22, fontWeight: 700, fontFamily: monoStack }}>
-              {allRecords.length === 0 ? 0 : Math.round(totalStudyMin / allRecords.length)}분
+              {avgSessionMin}분
             </div>
           </Card>
           <Card style={{ padding: 12 }}>

@@ -8,8 +8,14 @@ import type {
 } from "./types";
 import type { Task, TaskTypeCode, Difficulty } from "../types";
 import { http, setTokens, clearTokens, getRefreshToken, ApiError } from "./client";
-import type { TaskDTO, FolderDTO, UserDTO, SessionDTO, DailyPlanDTO, PlanRecommendationDTO, AuthResultDTO } from "./dto";
-import { mapTask, mapFolder, mapUser, mapSession, mapDailyPlan, mapPlanRecommendations, taskToBody, TASK_TYPE_ID, fromFocusLevel, toLocalDateTime } from "./mappers";
+import type { TaskDTO, FolderDTO, UserDTO, SessionDTO, DailyPlanDTO, PlanRecommendationDTO, AuthResultDTO, ReminderDTO } from "./dto";
+import { mapTask, mapFolder, mapUser, mapSession, mapDailyPlan, mapPlanRecommendations, mapReminder, taskToBody, TASK_TYPE_ID, fromFocusLevel, toLocalDateTime } from "./mappers";
+
+// 학습 기록에는 정상 종료(ENDED)된 세션만 노출한다.
+// (백엔드 /tasks/{id}/sessions 는 ABANDONED·ACTIVE·PAUSED 까지 모두 반환하므로,
+//  종료하지 않고 이탈한 0분짜리 무효 세션이 기록에 찍히지 않도록 여기서 거른다.)
+const endedSessions = (sessions: SessionDTO[]) =>
+  sessions.filter((s) => s.sessionStatus === "ENDED");
 
 // 세션 변경 후 태스크 본문 + 기록 목록을 함께 최신화한다.
 async function reloadTask(id: string): Promise<Task> {
@@ -17,7 +23,7 @@ async function reloadTask(id: string): Promise<Task> {
     http.get<TaskDTO>(`/tasks/${id}`),
     http.get<SessionDTO[]>(`/tasks/${id}/sessions`),
   ]);
-  return mapTask(taskDto, sessions);
+  return mapTask(taskDto, endedSessions(sessions));
 }
 
 export const realApi: RealPlanApi = {
@@ -171,7 +177,7 @@ export const realApi: RealPlanApi = {
   // GET /tasks/{id}/sessions — 태스크 학습 기록 목록 (최신순)
   async fetchTaskSessions(taskId) {
     const sessions = await http.get<SessionDTO[]>(`/tasks/${taskId}/sessions`);
-    return sessions.map(mapSession);
+    return endedSessions(sessions).map(mapSession);
   },
 
   // ── DailyPlan ──
@@ -258,6 +264,17 @@ export const realApi: RealPlanApi = {
     if (code === "TIME_BASED" || code === "QUANTITY_BASED" || code === "SATISFACTION_BASED") return code;
     return "SATISFACTION_BASED";
   },
+  // 홈 리마인더 조회: GET /tasks/reminders?limit=
+  async fetchReminders(limit) {
+    const q = limit != null ? `?limit=${limit}` : "";
+    const data = await http.get<ReminderDTO[]>(`/tasks/reminders${q}`);
+    return (data ?? []).map(mapReminder);
+  },
+  // 리마인더 확인 처리: POST /tasks/reminders/read { taskIds: number[] }
+  async markRemindersRead(taskIds) {
+    if (taskIds.length === 0) return;
+    await http.post<string>("/tasks/reminders/read", { taskIds: taskIds.map(Number) });
+  },
   // 주간 통계: GET /analytics/weekly
   async fetchWeeklyStats() {
     return await http.get<WeeklyStats>("/analytics/weekly");
@@ -300,12 +317,27 @@ export const realApi: RealPlanApi = {
   },
   // 난이도별 보정: 백엔드에 대응 엔드포인트(difficulty-stats)가 없어 기본값(보정 없음)을 반환한다.
   // TODO(backend): 난이도별 UserTaskTypeProfile 유사 분석 + GET /analytics/difficulty-stats 추가 시 실제 연동.
+  // 난이도별 계획 오류 보정: GET /analytics/difficulty-correction (UserAiDifficultyResidual 기반).
+  // 모든 난이도를 반환하며, 학습 이력이 없는 난이도는 correctionPercent=0(보정 없음)으로 온다.
   async fetchDifficultyCorrections() {
-    return {
+    type Item = {
+      difficulty: string; difficultyLabel: string; sampleCount: number;
+      residual: number | null; correctionPercent: number | null; updatedAt: string | null;
+    };
+    const data = await http.get<{ items: Item[] }>("/analytics/difficulty-correction");
+    const result = {
       LOW: { coefficient: 1, sampleCount: 0 },
       MEDIUM: { coefficient: 1, sampleCount: 0 },
       HIGH: { coefficient: 1, sampleCount: 0 },
       UNKNOWN: { coefficient: 1, sampleCount: 0 },
     } as DifficultyCorrections;
+    for (const it of data.items ?? []) {
+      const d = (it.difficulty ?? "").toUpperCase() as Difficulty;
+      if (d in result) {
+        // correctionPercent(= residual×100) → 배율. 0 이면 ×1.00.
+        result[d] = { coefficient: 1 + Number(it.correctionPercent ?? 0) / 100, sampleCount: it.sampleCount };
+      }
+    }
+    return result;
   },
 };

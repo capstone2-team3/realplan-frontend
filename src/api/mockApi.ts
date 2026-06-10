@@ -6,10 +6,14 @@ import type {
   RealPlanApi, CreateTaskInput, ManualRecordInput, SessionFeedbackInput, DifficultyCorrections,
   WeeklyStats, DailyStudyTime, TypeStat, FocusBucket,
 } from "./types";
-import type { Task, Folder, User, StudyRecord, DailyPlan, DailyPlanSlot, DailyPlanTask, PlanSourceType } from "../types";
+import type { Task, Folder, User, StudyRecord, DailyPlan, DailyPlanSlot, DailyPlanTask, PlanSourceType, Reminder } from "../types";
 import { initialTasks, initialFolders } from "./mockData";
 import { today } from "../lib/time";
 import { slotIndexToLabel } from "../lib/schedule";
+import { getReminderTasks } from "../lib/tasks";
+
+// 확인 처리(read)된 리마인더 taskId. mock 에서는 read 호출 시 목록에서 제외하기 위해 추적한다.
+const readReminderIds = new Set<string>();
 
 const delay = (ms = 250) => new Promise((r) => setTimeout(r, ms));
 
@@ -360,6 +364,28 @@ export const mockApi: RealPlanApi = {
     if (/강의|영상|시청|듣기|읽기|복습|정리|수강|클래스/.test(t)) return "TIME_BASED";
     // 기본값
     return "SATISFACTION_BASED";
+  },
+  async fetchReminders(limit?: number): Promise<Reminder[]> {
+    await delay();
+    const list = getReminderTasks(tasks).filter((t) => !readReminderIds.has(t.id));
+    const sliced = limit != null ? list.slice(0, limit) : list;
+    return sliced.map((t) => ({
+      taskId: t.id,
+      name: t.name,
+      dueDate: t.deadline,
+      importance: t.importance,
+      status: t.completed ? "COMPLETED" : "IN_PROGRESS",
+      remainingMin: t.remainingMin,
+      progressPercent: 0,
+      reminderType: "DUE_SOON",
+      message: "마감이 얼마 남지 않았어요",
+      priority: 0,
+      lastNotifiedAt: t.lastNotifiedAt,
+    }));
+  },
+  async markRemindersRead(taskIds: string[]): Promise<void> {
+    await delay(150);
+    taskIds.forEach((id) => readReminderIds.add(id));
   },
   async fetchWeeklyStats(): Promise<WeeklyStats> {
     await delay();

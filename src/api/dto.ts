@@ -35,6 +35,21 @@ export type TaskDTO = {
   updatedAt: string;
 };
 
+// 홈 리마인더 (Swagger GET /tasks/reminders). 서버가 노출 대상을 선별해 내려준다.
+export type ReminderDTO = {
+  taskId: number;
+  name: string;
+  dueDate: string | null;     // ISO
+  importance: string;         // HIGH / MEDIUM / LOW
+  status: string;             // PENDING / IN_PROGRESS / COMPLETED
+  remainingMin: number;
+  progressPercent: number;    // 0-100
+  reminderType: string;       // DUE_SOON 등
+  message: string;
+  priority: number;
+  lastNotifiedAt: string | null;
+};
+
 // Folder (Swagger §Folders 응답 기준)
 // ⚠️ boolean getter 가 Jackson 으로 직렬화되며 키가 `default` 다 (isDefault 아님).
 export type FolderDTO = {

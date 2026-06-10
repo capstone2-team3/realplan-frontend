@@ -25,9 +25,13 @@ export const fmtDuration = (sec: number) => {
   return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
 };
 
-// 과거 시각 → "n분 전" / "n시간 전" / "n일 전"
+// 과거 시각 → "방금 전" / "n분 전" / "n시간 전" / "n일 전"
+// 모듈 로드 시점에 고정되는 `today` 대신 호출 시점의 실제 현재 시각으로 계산한다.
+// (세션을 오래 열어두면 `today` 가 과거에 멈춰, 방금 설정된 시각이 미래로 계산돼
+//  "-91분 전" 같은 음수가 나오던 버그를 방지한다.) 미래/0 이하는 "방금 전" 으로 처리.
 export const fmtAgo = (d: Date) => {
-  const diffMin = Math.round((today.getTime() - d.getTime()) / 60000);
+  const diffMin = Math.round((Date.now() - d.getTime()) / 60000);
+  if (diffMin <= 0) return "방금 전";
   if (diffMin < 60) return `${diffMin}분 전`;
   const diffH = Math.round(diffMin / 60);
   if (diffH < 24) return `${diffH}시간 전`;

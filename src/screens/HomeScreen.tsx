@@ -1,8 +1,9 @@
 import { useState, useEffect, useRef } from "react";
 import { Bell, Calendar, ChevronLeft, ChevronRight, Clock, Info, Sparkles, X } from "lucide-react";
-import type { Folder, Screen, Task, HomeRecommendation } from "../types";
+import type { Folder, Screen, Task, HomeRecommendation, Reminder } from "../types";
 import { api } from "../api";
 import { ApiError } from "../api/client";
+import type { FocusBucket } from "../api/types";
 import { Btn } from "../components/Btn";
 import { Card } from "../components/Card";
 import { ImportancePill } from "../components/ImportancePill";
@@ -14,9 +15,44 @@ import { TimeSlotGrid } from "../components/TimeSlotGrid";
 import { TodayScheduleView } from "../components/TodayScheduleView";
 import { fmtAgo, fmtDday, fmtMin } from "../lib/format";
 import { compressSlots, slotIndexToLabel } from "../lib/schedule";
-import { getReminderTasks } from "../lib/tasks";
 import { dateKey, fmtMonthDay, fmtMonthDayWeekday, isSameDay, startOfToday, today } from "../lib/time";
 import { monoStack, tone } from "../theme/tokens";
+
+// 추천 집중시간대 밴드 (추천 AI와 동일한 06-12 / 12-18 / 18-24 3구간).
+const RECO_BANDS = [
+  { label: "06-12시", hours: [6, 8, 10] },
+  { label: "12-18시", hours: [12, 14, 16] },
+  { label: "18-24시", hours: [18, 20, 22] },
+];
+
+// focus-by-hour(2시간 버킷) → 밴드별 (세션 가중) 평균 집중도. 실제 데이터가 있는 밴드만 반환한다.
+function bandFocusStats(buckets: FocusBucket[]) {
+  return RECO_BANDS.map((b) => {
+    const inBand = buckets.filter((x) => b.hours.includes(x.startHour) && x.sessionCount > 0);
+    const sessions = inBand.reduce((s, x) => s + x.sessionCount, 0);
+    const avg = sessions > 0 ? inBand.reduce((s, x) => s + x.averageFocus * x.sessionCount, 0) / sessions : 0;
+    return { label: b.label, avg, sessions };
+  }).filter((b) => b.sessions > 0);
+}
+
+// 태스크별 집중시간대 라벨. 추천 API의 recommendedTimeBand 는 "현재 시각 이후"로만 필터되고
+// 콜드스타트엔 기본값이 채워져 정보가 왜곡되므로, 실제 집중 데이터(focus-by-hour)로 직접 계산한다.
+// - 데이터가 전혀 없으면 매핑에서 제외 → 화면에서 "분석 전"으로 표시된다(시각과 무관).
+// - requiredFocusLevel 이 LOW 면 집중도가 가장 낮은 밴드, 그 외(HIGH/MEDIUM/FLEXIBLE)는 가장 높은 밴드.
+function computeTimeBandByTask(
+  items: { taskId: string; requiredFocusLevel: string }[],
+  buckets: FocusBucket[],
+): Record<string, string> {
+  const stats = bandFocusStats(buckets);
+  const result: Record<string, string> = {};
+  if (stats.length === 0) return result; // 콜드스타트: 집중 데이터 없음
+  const byFocusDesc = [...stats].sort((a, b) => b.avg - a.avg);
+  for (const it of items) {
+    const isLow = (it.requiredFocusLevel || "").toUpperCase() === "LOW";
+    result[it.taskId] = (isLow ? byFocusDesc[byFocusDesc.length - 1] : byFocusDesc[0]).label;
+  }
+  return result;
+}
 
 export function HomeScreen({
   tasks,
@@ -53,7 +89,37 @@ export function HomeScreen({
   // 현재 빌더 세션에서 편집(날짜 이동 포함)한 날짜들 — 완료 시 모두 저장하기 위해 추적
   const builderDirtyDates = useRef<Set<string>>(new Set());
 
-  const reminderTasks = getReminderTasks(tasks);
+  // Task 리마인더: 서버(GET /tasks/reminders)가 노출 대상을 선별해 내려준다. 최대 3개.
+  // 단, 서버 getReminders 는 "알림 이후 학습한 Task 제외" 필터가 없으므로, 각 리마인더의
+  // ENDED 세션을 조회해 lastNotifiedAt 이후에 학습 기록이 생긴 Task 는 프론트에서 제외한다.
+  // (이상적으로는 백엔드 getReminders 가 서버에서 걸러주는 게 맞다 — TODO(backend).)
+  const [reminders, setReminders] = useState<Reminder[]>([]);
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const list = await api.fetchReminders(3);
+        const studiedAfterNotify = await Promise.all(
+          list.map(async (r) => {
+            if (!r.lastNotifiedAt) return false; // 알림 시각이 없으면 비교 불가 → 유지
+            try {
+              const sessions = await api.fetchTaskSessions(r.taskId);
+              return sessions.some((s) => s.endedAt.getTime() > r.lastNotifiedAt!.getTime());
+            } catch {
+              return false;
+            }
+          }),
+        );
+        if (!alive) return;
+        setReminders(list.filter((_, i) => !studiedAfterNotify[i]));
+      } catch (e) {
+        console.error("리마인더 조회 실패:", e);
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, []);
 
   const upcoming = tasks
     .filter((t) => !t.completed)
@@ -145,16 +211,17 @@ export function HomeScreen({
     try {
       setBusy(true);
       const planId = await ensurePlan(viewDateKey, [...currentAvailability].sort((a, b) => a - b));
-      const recs = await api.fetchPlanRecommendations(planId);
+      const [recs, focusBuckets] = await Promise.all([
+        api.fetchPlanRecommendations(planId),
+        api.fetchFocusByHour().catch(() => [] as FocusBucket[]),
+      ]);
       const byId = new Map(tasks.map((t) => [t.id, t]));
       const items = recs.items
         .map((r) => byId.get(r.taskId))
         .filter((t): t is Task => !!t && !t.completed);
-      // taskId → 추천 집중시간대 라벨 (실제 AI 계산값). 태그에 하드코딩 대신 이 값을 쓴다.
-      const timeBandByTask: Record<string, string> = {};
-      for (const r of recs.items) {
-        if (r.recommendedTimeBandLabel) timeBandByTask[r.taskId] = r.recommendedTimeBandLabel;
-      }
+      // 집중시간대 태그: 실제 집중 패턴(focus-by-hour)으로 시각과 무관하게 계산.
+      // 데이터 없는 태스크는 매핑에서 빠져 "분석 전"으로 표시된다.
+      const timeBandByTask = computeTimeBandByTask(recs.items, focusBuckets);
       const total = Math.min(availableMin, items.reduce((s, t) => s + t.remainingMin, 0));
       setRecommendation({ items, total, timeBandByTask });
       setShowAllRecs(false);
@@ -239,14 +306,14 @@ export function HomeScreen({
       </div>
 
       {/* Task Reminder */}
-      {reminderTasks.length > 0 && (
+      {reminders.length > 0 && (
         <div style={{ marginBottom: 16 }}>
           <SectionLabel>Task 리마인더</SectionLabel>
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-            {reminderTasks.map((t) => (
+            {reminders.map((t) => (
               <Card
-                key={t.id}
-                onClick={() => onNavigate({ name: "taskDetail", taskId: t.id })}
+                key={t.taskId}
+                onClick={() => onNavigate({ name: "taskDetail", taskId: t.taskId })}
                 style={{ borderColor: tone.warnSoft, background: tone.warnSoft }}
               >
                 <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
@@ -270,8 +337,8 @@ export function HomeScreen({
                       <Pill variant="default" size="sm">
                         <Clock size={9} /> {fmtMin(t.remainingMin)} 남음
                       </Pill>
-                      <Pill variant={fmtDday(t.deadline).startsWith("D-") && parseInt(fmtDday(t.deadline).slice(2)) <= 3 ? "danger" : "muted"} size="sm">
-                        {fmtDday(t.deadline)}
+                      <Pill variant={fmtDday(t.dueDate).startsWith("D-") && parseInt(fmtDday(t.dueDate).slice(2)) <= 3 ? "danger" : "muted"} size="sm">
+                        {fmtDday(t.dueDate)}
                       </Pill>
                       {t.lastNotifiedAt && (
                         <span style={{ fontSize: 10, color: tone.warn, fontWeight: 500 }}>

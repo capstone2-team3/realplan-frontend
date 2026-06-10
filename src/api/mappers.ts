@@ -8,9 +8,9 @@
 
 import type {
   Task, Folder, StudyRecord, User, TaskTypeCode, Importance, Difficulty,
-  DailyPlan, DailyPlanStatus, PlanSourceType, PlanRecommendations,
+  DailyPlan, DailyPlanStatus, PlanSourceType, PlanRecommendations, Reminder,
 } from "../types";
-import type { TaskDTO, FolderDTO, SessionDTO, UserDTO, DailyPlanDTO, PlanRecommendationDTO } from "./dto";
+import type { TaskDTO, FolderDTO, SessionDTO, UserDTO, DailyPlanDTO, PlanRecommendationDTO, ReminderDTO } from "./dto";
 
 // task_type.code: TIME_BASED / QUANTITY_BASED / SATISFACTION_BASED.
 // 값은 프론트와 동일하지만 join 시 undefined 가능 → 기본값만 보정.
@@ -74,6 +74,22 @@ export function mapTask(dto: TaskDTO, sessions: SessionDTO[] = []): Task {
     createdAt: new Date(dto.createdAt),
     lastNotifiedAt: dto.lastNotifiedAt ? new Date(dto.lastNotifiedAt) : undefined,
     records: sessions.map(mapSession),
+  };
+}
+
+export function mapReminder(dto: ReminderDTO): Reminder {
+  return {
+    taskId: String(dto.taskId),
+    name: dto.name,
+    dueDate: dto.dueDate ? new Date(dto.dueDate) : new Date(),
+    importance: (dto.importance?.toUpperCase() as Importance) ?? "MEDIUM",
+    status: dto.status,
+    remainingMin: dto.remainingMin ?? 0,
+    progressPercent: dto.progressPercent ?? 0,
+    reminderType: dto.reminderType,
+    message: dto.message,
+    priority: dto.priority ?? 0,
+    lastNotifiedAt: dto.lastNotifiedAt ? new Date(dto.lastNotifiedAt) : undefined,
   };
 }
 

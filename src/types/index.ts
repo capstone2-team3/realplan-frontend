@@ -72,6 +72,23 @@ export type Task = {
   records: StudyRecord[];
 };
 
+// 홈 화면 Task 리마인더 (백엔드 GET /tasks/reminders).
+// 마감 임박·진행 정체 등으로 Push 알림을 받았으나 아직 확인하지 않은 Task.
+// 노출 대상 산정은 서버가 담당하므로, 프론트는 이 목록을 그대로 표시만 한다.
+export type Reminder = {
+  taskId: string;
+  name: string;
+  dueDate: Date;
+  importance: Importance;
+  status: string;            // PENDING / IN_PROGRESS / COMPLETED
+  remainingMin: number;
+  progressPercent: number;
+  reminderType: string;      // DUE_SOON 등 (서버 enum)
+  message: string;
+  priority: number;
+  lastNotifiedAt?: Date;
+};
+
 // 폴더 (백엔드 folder 테이블과 매핑)
 export type Folder = {
   id: string;

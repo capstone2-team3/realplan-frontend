@@ -3,7 +3,7 @@
 // mock 구현(mockApi)과 실제 구현(realApi)이 이 인터페이스를 똑같이 만족하므로,
 // 합치는 날 index.ts 의 한 줄만 바꾸면 전체가 실제 서버로 전환된다.
 
-import type { Task, Folder, User, StudyRecord, DailyPlan, DailyPlanStatus, PlanRecommendations, TaskTypeCode, Difficulty } from "../types";
+import type { Task, Folder, User, StudyRecord, DailyPlan, DailyPlanStatus, PlanRecommendations, TaskTypeCode, Difficulty, Reminder } from "../types";
 
 export type CreateTaskInput = Omit<Task, "id" | "records" | "createdAt">;
 
@@ -132,6 +132,10 @@ export interface RealPlanApi {
 
   // Task 유형 자동 분류 (이름 텍스트 → 유형 추천)
   classifyTaskType(title: string): Promise<TaskTypeCode>;
+
+  // 홈 Task 리마인더
+  fetchReminders(limit?: number): Promise<Reminder[]>;       // GET /tasks/reminders?limit=
+  markRemindersRead(taskIds: string[]): Promise<void>;       // POST /tasks/reminders/read
 
   // Analytics
   fetchWeeklyStats(): Promise<WeeklyStats>;                  // GET /analytics/weekly
