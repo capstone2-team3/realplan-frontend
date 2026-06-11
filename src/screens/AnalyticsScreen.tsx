@@ -6,7 +6,7 @@ import { Pill } from "../components/Pill";
 import { monoStack, tone } from "../theme/tokens";
 import { TASK_TYPE_DESC, TASK_TYPE_LABELS, DIFFICULTY_LABELS } from "../types";
 import { api } from "../api";
-import type { DifficultyCorrections, TypeStat, FocusBucket, WeeklyStats, DailyStudyTime } from "../api/types";
+import type { TypeStat, FocusBucket, WeeklyStats, DailyStudyTime } from "../api/types";
 
 export function AnalyticsScreen({ tasks }: { tasks: Task[] }) {
   const TYPES: TaskTypeCode[] = ["TIME_BASED", "QUANTITY_BASED", "SATISFACTION_BASED"];
@@ -18,8 +18,8 @@ export function AnalyticsScreen({ tasks }: { tasks: Task[] }) {
   const [weekly, setWeekly] = useState<WeeklyStats | null>(null);
   // 평균 세션 계산용: 최근 4주 일별 학습시간 (총 학습분 합산).
   const [daily, setDaily] = useState<DailyStudyTime | null>(null);
-  // 난이도별 보정: AI 로그 보정값을 실제 배율로 변환한 값.
-  const [diffCorr, setDiffCorr] = useState<DifficultyCorrections | null>(null);
+  // 유형/난이도별 보정 배율은 백엔드 보정 통계(세션 오차비/평균제거 잔차)가 아니라,
+  // 각 Task의 실제 적용 보정치(adjusted/original)를 프론트에서 집계해 보여준다. (아래 appliedCorrection)
 
   useEffect(() => {
     let alive = true;
@@ -27,15 +27,13 @@ export function AnalyticsScreen({ tasks }: { tasks: Task[] }) {
       api.fetchTypeStats(),
       api.fetchFocusByHour(),
       api.fetchWeeklyStats(),
-      api.fetchDifficultyCorrections(),
       api.fetchDailyStudyTime(4),
     ])
-      .then(([ts, fh, wk, dc, dl]) => {
+      .then(([ts, fh, wk, dl]) => {
         if (!alive) return;
         setTypeStats(ts);
         setFocusByHour(fh);
         setWeekly(wk);
-        setDiffCorr(dc);
         setDaily(dl);
       })
       .catch((e) => console.error("Analytics 로드 실패:", e));
@@ -74,6 +72,21 @@ export function AnalyticsScreen({ tasks }: { tasks: Task[] }) {
     return FOCUS_BAR_LOW;
   };
 
+  // 유형/난이도별 "실제 적용된 AI 보정 배율".
+  // adjustedEstimatedMin(=finalEstimated)은 userGlobal·시스템 prior·잔차가 모두 반영된 최종 보정치라,
+  // (adjusted / original) 가 그 Task에 실제 적용된 보정 배율이다. 그룹 내 평균을 보여준다.
+  // (백엔드 type-stats.biasCorrectionFactor 는 "보정 후 실제/예상 오차비", difficulty-correction 의
+  //  residual 은 userGlobal 이 빠진 평균제거 편차라 둘 다 실제 보정 배율이 아니다. → 여기서 직접 계산.)
+  //
+  // 보정 OFF(시간형 한정 토글) Task 는 finalEstimated=userEstimated 라 비율이 항상 1.0 이다.
+  // 이를 평균에 넣으면 "ON 시 적용 보정률"이 1.0 쪽으로 희석되므로, correctionEnabled 인 Task만 집계한다.
+  const appliedCorrection = (groupTasks: Task[]) => {
+    const ratios = groupTasks
+      .filter((t) => t.correctionEnabled && t.originalEstimatedMin > 0)
+      .map((t) => t.adjustedEstimatedMin / t.originalEstimatedMin);
+    if (ratios.length === 0) return { coef: 1, count: 0 };
+    return { coef: ratios.reduce((s, r) => s + r, 0) / ratios.length, count: ratios.length };
+  };
   // 배율 → "+12% / -5% / ±0%" 형태 (음수 보정도 부호 정확히 표기)
   const correctionPctLabel = (coef: number) => {
     const pct = Math.round((coef - 1) * 100);
@@ -141,9 +154,8 @@ export function AnalyticsScreen({ tasks }: { tasks: Task[] }) {
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
             {TYPES.map((type) => {
               const typeTasks = tasks.filter((t) => t.type === type);
-              const stat = statByType(type);
-              const coef = stat?.biasCorrectionFactor ?? 1;
-              const samples = stat?.sampleCount ?? 0;
+              // 실제 적용된 AI 보정 배율(adjusted/original 평균). 보정 ON 이면 1.00 이 아닌 실제 값이 잡힌다.
+              const { coef, count } = appliedCorrection(typeTasks);
               return (
                 <div
                   key={type}
@@ -168,7 +180,7 @@ export function AnalyticsScreen({ tasks }: { tasks: Task[] }) {
                     </Pill>
                   </div>
                   <div style={{ fontSize: 10, color: tone.inkSubtle }}>
-                    {typeTasks.length}개 Task · {samples}개 세션 학습 · 평균 {correctionPctLabel(coef)} 보정
+                    {typeTasks.length}개 Task · 보정 적용 {count}개 · 평균 {correctionPctLabel(coef)} 보정
                   </div>
                 </div>
               );
@@ -198,8 +210,9 @@ export function AnalyticsScreen({ tasks }: { tasks: Task[] }) {
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
             {DIFFICULTIES.map((d) => {
               const diffTasks = tasks.filter((t) => t.difficulty === d);
-              const coef = diffCorr?.[d].coefficient ?? 1;
-              const samples = diffCorr?.[d].sampleCount ?? 0;
+              // 실제 적용된 AI 보정 배율(adjusted/original 평균). residual(평균제거 편차)이 아니라
+              // userGlobal·시스템효과까지 반영된 최종 보정치라 값/대소관계가 의미 있게 나온다.
+              const { coef, count } = appliedCorrection(diffTasks);
               return (
                 <div
                   key={d}
@@ -215,7 +228,7 @@ export function AnalyticsScreen({ tasks }: { tasks: Task[] }) {
                     <Pill variant={coefVariant(coef)}>×{coef.toFixed(2)}</Pill>
                   </div>
                   <div style={{ fontSize: 10, color: tone.inkSubtle }}>
-                    {diffTasks.length}개 Task · {samples}개 세션 학습 · 평균 {correctionPctLabel(coef)} 보정
+                    {diffTasks.length}개 Task · 보정 적용 {count}개 · 평균 {correctionPctLabel(coef)} 보정
                   </div>
                 </div>
               );

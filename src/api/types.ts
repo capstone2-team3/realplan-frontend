@@ -49,7 +49,7 @@ export type DailyStudyTime = {
   endDate: string;
   days: DailyStudyDay[];
 };
-// 유형별 통계 (예상 vs 실제 집계 + AI 최종 보정 배율)
+// 유형별 통계 (UserTaskTypeProfile 기반: 예상 vs 실제, 보정 계수)
 export type TypeStat = {
   taskTypeId: number;
   taskTypeCode: TaskTypeCode;
@@ -58,7 +58,7 @@ export type TypeStat = {
   plannedMinutes: number;
   actualMinutes: number;
   errorRatio: number;
-  biasCorrectionFactor: number;     // 화면 표시용 최종 보정 배율
+  biasCorrectionFactor: number;     // = 보정 배율
   lastCalculatedAt: string | null;
 };
 // 시간대별(2시간 단위) 평균 집중도 버킷. averageFocus 는 1~4 (데이터 없으면 0).
