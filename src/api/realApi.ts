@@ -288,7 +288,8 @@ export const realApi: RealPlanApi = {
     type Raw = {
       taskTypeId: number; taskTypeCode: string; taskTypeName: string;
       sampleCount: number; plannedMinutes: number; actualMinutes: number;
-      errorRatio: number | null; biasCorrectionFactor: number | null; lastCalculatedAt: string | null;
+      errorRatio: number | null; biasCorrectionFactor: number | null;
+      finalCorrectionFactor?: number | null; lastCalculatedAt: string | null;
     };
     const data = await http.get<{ types: Raw[] }>("/analytics/type-stats");
     return (data.types ?? []).map((t): TypeStat => ({
@@ -299,7 +300,7 @@ export const realApi: RealPlanApi = {
       plannedMinutes: t.plannedMinutes,
       actualMinutes: t.actualMinutes,
       errorRatio: Number(t.errorRatio ?? 0),
-      biasCorrectionFactor: Number(t.biasCorrectionFactor ?? 1),
+      biasCorrectionFactor: Number(t.finalCorrectionFactor ?? t.biasCorrectionFactor ?? 1),
       lastCalculatedAt: t.lastCalculatedAt ?? null,
     }));
   },
@@ -315,14 +316,13 @@ export const realApi: RealPlanApi = {
       sessionCount: b.sessionCount,
     }));
   },
-  // 난이도별 보정: 백엔드에 대응 엔드포인트(difficulty-stats)가 없어 기본값(보정 없음)을 반환한다.
-  // TODO(backend): 난이도별 UserTaskTypeProfile 유사 분석 + GET /analytics/difficulty-stats 추가 시 실제 연동.
-  // 난이도별 계획 오류 보정: GET /analytics/difficulty-correction (UserAiDifficultyResidual 기반).
-  // 모든 난이도를 반환하며, 학습 이력이 없는 난이도는 correctionPercent=0(보정 없음)으로 온다.
+  // 난이도별 계획 오류 보정: GET /analytics/difficulty-correction.
+  // 백엔드가 userGlobal + residual을 exp 처리한 finalCorrectionFactor를 내려준다.
   async fetchDifficultyCorrections() {
     type Item = {
       difficulty: string; difficultyLabel: string; sampleCount: number;
-      residual: number | null; correctionPercent: number | null; updatedAt: string | null;
+      residual: number | null; correctionPercent: number | null;
+      finalCorrectionFactor?: number | null; updatedAt: string | null;
     };
     const data = await http.get<{ items: Item[] }>("/analytics/difficulty-correction");
     const result = {
@@ -334,8 +334,7 @@ export const realApi: RealPlanApi = {
     for (const it of data.items ?? []) {
       const d = (it.difficulty ?? "").toUpperCase() as Difficulty;
       if (d in result) {
-        // correctionPercent(= residual×100) → 배율. 0 이면 ×1.00.
-        result[d] = { coefficient: 1 + Number(it.correctionPercent ?? 0) / 100, sampleCount: it.sampleCount };
+        result[d] = { coefficient: Number(it.finalCorrectionFactor ?? 1), sampleCount: it.sampleCount };
       }
     }
     return result;
