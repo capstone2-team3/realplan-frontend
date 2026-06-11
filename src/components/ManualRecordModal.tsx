@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { StudyRecord, Task } from "../types";
 import { Btn } from "./Btn";
 import { Modal } from "./Modal";
@@ -30,14 +30,17 @@ export function ManualRecordModal({
   const validRange = !!(startDate && endDate && endDate > startDate);
   const dur = validRange ? Math.round((endDate!.getTime() - startDate!.getTime()) / 60000) : 0;
   const estimated = task?.adjustedEstimatedMin ?? 0;
-  // 이번에 입력한 수행 시간 기준 "예상 진행률" (세션 종료의 expectedPct 와 동일 개념)
-  const expectedPct = estimated > 0 ? Math.round((dur / estimated) * 100) : 0;
-  // 이전 기록의 마지막 진행률 (깃발 마커용)
+  // 직전 기록의 마지막 진행률 = 이번 세션의 시작점 (없으면 0)
   const prevPct =
     task && task.records.length > 0 ? task.records[task.records.length - 1].progressPercent : 0;
+  // 이번 세션이 더하는 진행률(델타) = 예상 소요 시간 대비 수행 시간 비율
+  const expectedDelta = estimated > 0 ? Math.round((dur / estimated) * 100) : 0;
+  // 예상 누적 진행률 = 직전 진행률 + 이번 세션 델타 (슬라이더 기본값 / 🏁 마커 위치)
+  const expectedPct = Math.min(100, Math.max(0, prevPct + expectedDelta));
 
-  // 수행 시간을 입력하기 전(또는 사용자가 슬라이더를 건드리기 전)에는 예상 진행률을 따라가게
-  const displayedPercent = progressTouched ? progressPercent : Math.min(100, Math.max(0, expectedPct));
+  // 수행 시간을 입력하기 전(또는 사용자가 슬라이더를 건드리기 전)에는 예상 진행률을 따라가게.
+  // 시간 미입력 시 델타=0 이므로 기본값은 직전 진행률(prevPct)이 된다.
+  const displayedPercent = progressTouched ? progressPercent : expectedPct;
 
   const reset = () => {
     setStartedAt("");
@@ -48,12 +51,19 @@ export function ManualRecordModal({
     setNotes("");
   };
 
+  // 저장하지 않고 닫으면 입력값을 초기화한다 (모달이 언마운트되지 않고 상태가 유지되는 문제 방지).
+  useEffect(() => {
+    if (!open) reset();
+    // reset 은 상태 setter 들만 사용하는 안정적인 동작이므로 deps 에 넣지 않는다.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
+
   const handleSave = () => {
     if (!validRange || focusLevel === null) return;
     onSave({
       startedAt: startDate!,
       endedAt: endDate!,
-      progressLevel: percentToLevel(displayedPercent, expectedPct),
+      progressLevel: percentToLevel(displayedPercent - prevPct, expectedDelta),
       progressPercent: displayedPercent,
       focusLevel,
       notes: notes.trim() || undefined,
@@ -76,7 +86,7 @@ export function ManualRecordModal({
       }
     >
       <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: 10 }}>
           <div>
             <div style={{ fontSize: 11, color: tone.inkMuted, marginBottom: 5, fontWeight: 500 }}>
               시작 시각
@@ -141,7 +151,7 @@ export function ManualRecordModal({
           expectedPercent={expectedPct}
           hint={
             dur > 0 && estimated > 0
-              ? `입력한 수행 시간(${fmtMin(dur)})은 예상 소요 시간(${fmtMin(estimated)})의 ${expectedPct}%입니다. 실제 진행률을 조정해주세요. (역행 가능)`
+              ? `입력한 수행 시간(${fmtMin(dur)})은 예상 소요 시간(${fmtMin(estimated)})의 ${expectedDelta}%로, 직전 진행률 ${prevPct}%에서 ${expectedPct}%가 예상됩니다. 실제 진행률을 조정해주세요. (역행 가능)`
               : "수행 시간을 입력하면 예상 진행률이 표시됩니다. 실제 진행률을 조정해주세요."
           }
         />

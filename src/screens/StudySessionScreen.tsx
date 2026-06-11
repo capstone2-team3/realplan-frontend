@@ -45,12 +45,16 @@ export function StudySessionScreen({
   }, [running]);
 
   const elapsedMin = Math.floor(elapsed / 60);
-  const totalSpent = task.records.reduce((s, r) => s + r.durationMin, 0) + elapsedMin;
-  const expectedPct = Math.round((totalSpent / task.adjustedEstimatedMin) * 100);
 
-  // 직전 세션 종료 시 진행률 (없으면 0)
+  // 직전 세션 종료 시 진행률 = 이번 세션의 시작점 (없으면 0)
   const prevPct =
     task.records.length > 0 ? task.records[task.records.length - 1].progressPercent : 0;
+
+  // 이번 세션이 더하는 진행률(델타) = 예상 소요 시간 대비 이번 세션 경과 시간 비율
+  const expectedDelta =
+    task.adjustedEstimatedMin > 0 ? Math.round((elapsedMin / task.adjustedEstimatedMin) * 100) : 0;
+  // 예상 누적 진행률 = 직전 진행률 + 이번 세션 델타 (실시간 바 / 🏁 마커 / 슬라이더 기본값)
+  const expectedPct = Math.min(100, Math.max(0, prevPct + expectedDelta));
 
   // 종료 다이얼로그 열 때 슬라이더 초기값을 예상 진행률로 세팅
   const openEndDialog = () => {
@@ -64,7 +68,7 @@ export function StudySessionScreen({
   const handleEnd = () => {
     if (focusLevel === null) return;
     onEnd({
-      progressLevel: percentToLevel(progressPercent, expectedPct),
+      progressLevel: percentToLevel(progressPercent - prevPct, expectedDelta),
       progressPercent,
       focusLevel,
       notes: notes.trim() || undefined,
@@ -187,7 +191,7 @@ export function StudySessionScreen({
           }}
           prevPercent={prevPct}
           expectedPercent={expectedPct}
-          hint={`예상 소요 시간(${fmtMin(task.adjustedEstimatedMin)})의 ${expectedPct}%(${totalSpent}분)가 지났습니다. 현재 진행률을 조정해주세요. (역행 가능)`}
+          hint={`이번 세션 ${elapsedMin}분(예상 소요 시간 ${fmtMin(task.adjustedEstimatedMin)}의 ${expectedDelta}%)이 지나, 직전 진행률 ${prevPct}%에서 ${expectedPct}%가 예상됩니다. 현재 진행률을 조정해주세요. (역행 가능)`}
         />
 
         <div style={{ marginTop: 16 }}>

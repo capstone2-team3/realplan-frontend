@@ -54,6 +54,28 @@ function computeTimeBandByTask(
   return result;
 }
 
+// 리마인더 "최초 노출 시각" 로컬 저장 (taskId → ISO). 서버 lastNotifiedAt 이 비어 있는
+// 환경(개발/푸시 미발송)에서도 "알림 이후" 기준 시각을 확보하기 위한 폴백이다.
+const REMINDER_SEEN_KEY = "realplan_reminder_seen";
+type SeenMap = Record<string, string>;
+function loadReminderSeen(): SeenMap {
+  try {
+    return JSON.parse(localStorage.getItem(REMINDER_SEEN_KEY) ?? "{}") as SeenMap;
+  } catch {
+    return {};
+  }
+}
+function saveReminderSeen(map: SeenMap) {
+  try {
+    localStorage.setItem(REMINDER_SEEN_KEY, JSON.stringify(map));
+  } catch {
+    /* localStorage 사용 불가 시 무시 */
+  }
+}
+
+// 화면 표시용 리마인더: 기준 시각(notifiedAt)을 항상 확정해 붙인다.
+type ReminderView = Reminder & { notifiedAt: Date };
+
 export function HomeScreen({
   tasks,
   folders,
@@ -90,30 +112,45 @@ export function HomeScreen({
   const builderDirtyDates = useRef<Set<string>>(new Set());
 
   // Task 리마인더: 서버(GET /tasks/reminders)가 노출 대상을 선별해 내려준다. 최대 3개.
-  // 단, 서버 getReminders 는 "알림 이후 학습한 Task 제외" 필터가 없으므로, 각 리마인더의
-  // ENDED 세션을 조회해 lastNotifiedAt 이후에 학습 기록이 생긴 Task 는 프론트에서 제외한다.
+  // 서버 getReminders 는 "알림 이후 학습한 Task 제외" 필터가 없으므로, 각 리마인더의
+  // ENDED 세션을 조회해 기준 시각(notifiedAt) 이후 학습 기록이 생긴 Task 는 프론트에서 제외한다.
+  // notifiedAt = 서버 lastNotifiedAt(있으면) 또는 로컬에 기록한 최초 노출 시각.
   // (이상적으로는 백엔드 getReminders 가 서버에서 걸러주는 게 맞다 — TODO(backend).)
-  const [reminders, setReminders] = useState<Reminder[]>([]);
+  const [reminders, setReminders] = useState<ReminderView[]>([]);
+  const [remindersLoaded, setRemindersLoaded] = useState(false);
   useEffect(() => {
     let alive = true;
     (async () => {
       try {
-        const list = await api.fetchReminders(3);
-        const studiedAfterNotify = await Promise.all(
+        // 프론트에서 학습 후 제외하면 표시 개수가 줄 수 있어, 여유 있게 받아 거른 뒤 상위 3개만 보여준다.
+        const list = await api.fetchReminders(6);
+
+        // 최초 노출 시각 갱신: 처음 보는 Task 는 지금 시각으로 기록하고, 목록에 없는 Task 는 정리(prune).
+        const seen = loadReminderSeen();
+        const nowIso = new Date().toISOString();
+        const nextSeen: SeenMap = {};
+        for (const r of list) nextSeen[r.taskId] = seen[r.taskId] ?? nowIso;
+        saveReminderSeen(nextSeen);
+
+        const evaluated = await Promise.all(
           list.map(async (r) => {
-            if (!r.lastNotifiedAt) return false; // 알림 시각이 없으면 비교 불가 → 유지
+            const notifiedAt = r.lastNotifiedAt ?? new Date(nextSeen[r.taskId]);
+            let studiedAfter = false;
             try {
               const sessions = await api.fetchTaskSessions(r.taskId);
-              return sessions.some((s) => s.endedAt.getTime() > r.lastNotifiedAt!.getTime());
+              studiedAfter = sessions.some((s) => s.endedAt.getTime() > notifiedAt.getTime());
             } catch {
-              return false;
+              /* 세션 조회 실패 시 보수적으로 유지 */
             }
+            return { view: { ...r, notifiedAt } as ReminderView, studiedAfter };
           }),
         );
         if (!alive) return;
-        setReminders(list.filter((_, i) => !studiedAfterNotify[i]));
+        setReminders(evaluated.filter((e) => !e.studiedAfter).map((e) => e.view).slice(0, 2));
       } catch (e) {
         console.error("리마인더 조회 실패:", e);
+      } finally {
+        if (alive) setRemindersLoaded(true);
       }
     })();
     return () => {
@@ -306,9 +343,15 @@ export function HomeScreen({
       </div>
 
       {/* Task Reminder */}
-      {reminders.length > 0 && (
-        <div style={{ marginBottom: 16 }}>
-          <SectionLabel>Task 리마인더</SectionLabel>
+      <div style={{ marginBottom: 16 }}>
+        <SectionLabel>Task 리마인더</SectionLabel>
+        {reminders.length === 0 ? (
+          <Card style={{ background: tone.surfaceMuted }}>
+            <div style={{ fontSize: 13, color: tone.inkMuted, textAlign: "center", padding: "6px 0" }}>
+              {remindersLoaded ? "리마인드 할 Task가 없습니다." : "리마인더를 불러오는 중…"}
+            </div>
+          </Card>
+        ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
             {reminders.map((t) => (
               <Card
@@ -340,11 +383,9 @@ export function HomeScreen({
                       <Pill variant={fmtDday(t.dueDate).startsWith("D-") && parseInt(fmtDday(t.dueDate).slice(2)) <= 3 ? "danger" : "muted"} size="sm">
                         {fmtDday(t.dueDate)}
                       </Pill>
-                      {t.lastNotifiedAt && (
-                        <span style={{ fontSize: 10, color: tone.warn, fontWeight: 500 }}>
-                          {fmtAgo(t.lastNotifiedAt)} 알림
-                        </span>
-                      )}
+                      <span style={{ fontSize: 10, color: tone.warn, fontWeight: 500 }}>
+                        {fmtAgo(t.notifiedAt)} 알림
+                      </span>
                     </div>
                   </div>
                   <ChevronRight size={16} color={tone.warn} />
@@ -352,8 +393,8 @@ export function HomeScreen({
               </Card>
             ))}
           </div>
-        </div>
-      )}
+        )}
+      </div>
 
       {/* Date-scoped container: 날짜 네비 + 시간표 + 시간표 생성하기 */}
       <div
