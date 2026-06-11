@@ -186,26 +186,30 @@ export function SettingsScreen({
 
           {/* Daily bar chart */}
           <div style={{ marginBottom: 16 }}>
-            <div style={{ display: "flex", alignItems: "flex-end", gap: 5, height: 80, paddingTop: 5 }}>
-              {dailyMinutes.map((m, i) => (
-                <div key={i} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
-                  <div
-                    style={{
-                      width: "100%",
-                      height: `${(m / maxDaily) * 100}%`,
-                      background: m >= 120 ? tone.accent : tone.borderStrong,
-                      borderRadius: 4,
-                      minHeight: 2,
-                    }}
-                  />
-                  <div style={{ fontSize: 10, color: tone.inkMuted, fontWeight: 500 }}>
-                    {dayLabels[i]}
+            <div style={{ display: "flex", alignItems: "flex-end", gap: 5 }}>
+              {dailyMinutes.map((m, i) => {
+                const barH = m > 0 ? Math.max(2, (m / maxDaily) * 70) : 0;
+                return (
+                  <div key={i} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
+                    <div style={{ width: "100%", height: 70, display: "flex", alignItems: "flex-end" }}>
+                      <div
+                        style={{
+                          width: "100%",
+                          height: barH,
+                          background: m >= 120 ? tone.accent : tone.borderStrong,
+                          borderRadius: 4,
+                        }}
+                      />
+                    </div>
+                    <div style={{ fontSize: 10, color: tone.inkMuted, fontWeight: 500 }}>
+                      {dayLabels[i]}
+                    </div>
+                    <div style={{ fontSize: 9, color: tone.inkSubtle, fontFamily: monoStack }}>
+                      {m}분
+                    </div>
                   </div>
-                  <div style={{ fontSize: 9, color: tone.inkSubtle, fontFamily: monoStack }}>
-                    {m}분
-                  </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </div>
 

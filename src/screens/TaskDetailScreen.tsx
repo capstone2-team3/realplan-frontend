@@ -8,7 +8,7 @@ import { ProgressBar } from "../components/ProgressBar";
 import { SectionLabel } from "../components/SectionLabel";
 import { fmtDday, fmtMin } from "../lib/format";
 import { monoStack, tone } from "../theme/tokens";
-import { FOCUS_LABELS, PROGRESS_LABELS, TASK_TYPE_LABELS } from "../types";
+import { DIFFICULTY_LABELS, FOCUS_LABELS, PROGRESS_LABELS, TASK_TYPE_LABELS } from "../types";
 
 export function TaskDetailScreen({
   task,
@@ -68,6 +68,7 @@ export function TaskDetailScreen({
             </Pill>
             <Pill variant="muted">{TASK_TYPE_LABELS[task.type]}</Pill>
             <ImportancePill value={task.importance} />
+            <Pill variant="muted" size="sm">난이도 {DIFFICULTY_LABELS[task.difficulty]}</Pill>
             {task.type === "TIME_BASED" && !task.correctionEnabled && (
               <Pill variant="muted">보정 OFF</Pill>
             )}

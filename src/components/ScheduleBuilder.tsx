@@ -175,19 +175,22 @@ export function ScheduleBuilder({
           <span style={{ fontSize: 11, fontWeight: sel ? 600 : 500, color: tone.ink, display: "block", lineHeight: 1.3 }}>
             {t.name}
           </span>
-          {(() => {
-            // 추천에 포함된 Task 는 AI가 계산한 실제 집중시간대를, 없으면 cold start 표시.
-            const tb = recommendation?.timeBandByTask[t.id];
-            return tb ? (
-              <span style={{ fontSize: 9, color: tone.warn, fontWeight: 600, display: "block", marginTop: 2 }}>
-                🔥 {tb}
-              </span>
-            ) : (
-              <span style={{ fontSize: 9, color: tone.inkSubtle, fontWeight: 500, display: "block", marginTop: 2 }}>
-                🕐 집중시간대 분석 전
-              </span>
-            );
-          })()}
+          {/* 집중시간대 태그는 추천 Task 에만 표시한다. 일반 Task 는 추천 컨텍스트(시각·가용시간)가
+              없어 의미 있는 집중시간대를 줄 수 없으므로 표시하지 않는다. */}
+          {isRec &&
+            (() => {
+              // 추천에 포함된 Task 는 AI가 계산한 실제 집중시간대를, 없으면 cold start 표시.
+              const tb = recommendation?.timeBandByTask[t.id];
+              return tb ? (
+                <span style={{ fontSize: 9, color: tone.warn, fontWeight: 600, display: "block", marginTop: 2 }}>
+                  🔥 {tb}
+                </span>
+              ) : (
+                <span style={{ fontSize: 9, color: tone.inkSubtle, fontWeight: 500, display: "block", marginTop: 2 }}>
+                  🕐 집중시간대 분석 전
+                </span>
+              );
+            })()}
           <span
             style={{
               fontSize: 9,

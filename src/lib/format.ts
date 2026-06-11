@@ -1,5 +1,5 @@
 // ───────────────────────── 포맷 유틸 ─────────────────────────
-import { today } from "./time";
+import { startOfDay, startOfToday } from "./time";
 
 // 분 → "1시간 30분"
 export const fmtMin = (m: number) => {
@@ -10,8 +10,10 @@ export const fmtMin = (m: number) => {
 };
 
 // 마감일 → D-day / D-3 / D+2
+// 시·분이 포함된 현재 시각이 아니라 "날짜(자정)" 기준으로 남은 일수를 센다.
+// (현재 시각으로 빼면 마감 23:59 같은 시각 때문에 하루씩 밀려 보이는 문제 발생.)
 export const fmtDday = (d: Date) => {
-  const diff = Math.ceil((d.getTime() - today.getTime()) / 86400000);
+  const diff = Math.round((startOfDay(d).getTime() - startOfToday.getTime()) / 86400000);
   if (diff === 0) return "D-day";
   if (diff > 0) return `D-${diff}`;
   return `D+${-diff}`;

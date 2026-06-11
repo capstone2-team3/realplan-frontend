@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { Clock, Sparkles, Target, TrendingUp, Zap } from "lucide-react";
+import { Clock, Sparkles, TrendingUp, Zap } from "lucide-react";
 import type { Task, TaskTypeCode, Difficulty } from "../types";
 import { Card } from "../components/Card";
 import { Pill } from "../components/Pill";
@@ -47,17 +47,6 @@ export function AnalyticsScreen({ tasks }: { tasks: Task[] }) {
   // 유형 코드 → 통계 빠른 조회
   const statByType = (type: TaskTypeCode) => typeStats.find((t) => t.taskTypeCode === type);
 
-  // 예측 정확도: 유형별 평균 오차율(|errorRatio|)을 1에서 빼 백분율로. 데이터 없으면 null.
-  const predictionAccuracy =
-    typeStats.length > 0
-      ? Math.max(
-          0,
-          Math.min(
-            100,
-            Math.round(100 * (1 - typeStats.reduce((s, t) => s + Math.abs(t.errorRatio), 0) / typeStats.length)),
-          ),
-        )
-      : null;
   // 일일 평균 학습: 주간 총 학습시간 / 7
   const dailyAvgMin = weekly ? Math.round(weekly.totalMinutes.current / 7) : 0;
   // 평균 세션: 최근 4주 총 학습시간 / 총 세션 수. 수동 기록(MANUAL)·타이머 모두 ENDED 세션이라 함께 반영된다.
@@ -67,6 +56,23 @@ export function AnalyticsScreen({ tasks }: { tasks: Task[] }) {
 
   // 보정 배율에 따른 Pill 색상
   const coefVariant = (coef: number) => (coef >= 1.5 ? "warn" : coef > 1 ? "default" : "muted");
+
+  // 시간대별 집중도 막대 색상: 버킷들을 평균 집중도 기준으로 정렬해 상위/중위/하위 1/3 로 3색 배정.
+  // (12개 버킷 → 상위 4 진한 색, 중간 4 중간 색, 하위 4 연한 색)
+  const FOCUS_BAR_HIGH = tone.accent;     // 진한 색
+  const FOCUS_BAR_MID = "#6B8475";        // 중간 색 (세이지 그린)
+  const FOCUS_BAR_LOW = tone.borderStrong; // 연한 색
+  const focusRankOrder = [...focusByHour]
+    .map((b, i) => ({ i, v: b.averageFocus }))
+    .sort((a, b) => b.v - a.v)
+    .map((x) => x.i);
+  const focusBarColor = (i: number) => {
+    const third = Math.ceil(focusByHour.length / 3) || 1;
+    const rank = focusRankOrder.indexOf(i);
+    if (rank < third) return FOCUS_BAR_HIGH;
+    if (rank < third * 2) return FOCUS_BAR_MID;
+    return FOCUS_BAR_LOW;
+  };
 
   return (
     <div style={{ paddingBottom: 24 }}>
@@ -78,38 +84,31 @@ export function AnalyticsScreen({ tasks }: { tasks: Task[] }) {
       </div>
 
       <div style={{ padding: "0 16px" }}>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 16 }}>
-          <Card style={{ padding: 12 }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 5, marginBottom: 6 }}>
-              <Target size={12} color={tone.inkMuted} />
-              <div style={{ fontSize: 10, color: tone.inkMuted, fontWeight: 500 }}>나의 예측 정확도</div>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, marginBottom: 16 }}>
+          <Card style={{ padding: 10 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 4, marginBottom: 6 }}>
+              <Clock size={11} color={tone.inkMuted} />
+              <div style={{ fontSize: 10, color: tone.inkMuted, fontWeight: 500 }}>일일 평균</div>
             </div>
-            <div style={{ fontSize: 22, fontWeight: 700, fontFamily: monoStack }}>{predictionAccuracy ?? "—"}%</div>
-          </Card>
-          <Card style={{ padding: 12 }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 5, marginBottom: 6 }}>
-              <Clock size={12} color={tone.inkMuted} />
-              <div style={{ fontSize: 10, color: tone.inkMuted, fontWeight: 500 }}>일일 평균 학습</div>
-            </div>
-            <div style={{ fontSize: 22, fontWeight: 700, fontFamily: monoStack }}>
+            <div style={{ fontSize: 18, fontWeight: 700, fontFamily: monoStack }}>
               {dailyAvgMin}분
             </div>
           </Card>
-          <Card style={{ padding: 12 }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 5, marginBottom: 6 }}>
-              <Zap size={12} color={tone.inkMuted} />
+          <Card style={{ padding: 10 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 4, marginBottom: 6 }}>
+              <Zap size={11} color={tone.inkMuted} />
               <div style={{ fontSize: 10, color: tone.inkMuted, fontWeight: 500 }}>평균 세션</div>
             </div>
-            <div style={{ fontSize: 22, fontWeight: 700, fontFamily: monoStack }}>
+            <div style={{ fontSize: 18, fontWeight: 700, fontFamily: monoStack }}>
               {avgSessionMin}분
             </div>
           </Card>
-          <Card style={{ padding: 12 }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 5, marginBottom: 6 }}>
-              <TrendingUp size={12} color={tone.inkMuted} />
+          <Card style={{ padding: 10 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 4, marginBottom: 6 }}>
+              <TrendingUp size={11} color={tone.inkMuted} />
               <div style={{ fontSize: 10, color: tone.inkMuted, fontWeight: 500 }}>완료율</div>
             </div>
-            <div style={{ fontSize: 22, fontWeight: 700, fontFamily: monoStack }}>
+            <div style={{ fontSize: 18, fontWeight: 700, fontFamily: monoStack }}>
               {tasks.length === 0 ? 0 : Math.round((tasks.filter((t) => t.completed).length / tasks.length) * 100)}%
             </div>
           </Card>
@@ -223,20 +222,22 @@ export function AnalyticsScreen({ tasks }: { tasks: Task[] }) {
           <div style={{ fontSize: 11, color: tone.inkMuted, marginBottom: 12 }}>
             언제 가장 집중이 잘 되는지 확인하세요
           </div>
-          <div style={{ display: "flex", alignItems: "flex-end", gap: 3, height: 100, paddingTop: 10 }}>
+          <div style={{ display: "flex", alignItems: "flex-end", gap: 3 }}>
             {focusByHour.map((b, i) => {
               const v = b.averageFocus;
+              const barH = v > 0 ? Math.max(2, (v / 4) * 80) : 0;
               return (
                 <div key={i} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
-                  <div
-                    style={{
-                      width: "100%",
-                      height: `${(v / 4) * 100}%`,
-                      background: v >= 3 ? tone.accent : tone.borderStrong,
-                      borderRadius: 3,
-                      minHeight: v > 0 ? 2 : 0,
-                    }}
-                  />
+                  <div style={{ width: "100%", height: 80, display: "flex", alignItems: "flex-end" }}>
+                    <div
+                      style={{
+                        width: "100%",
+                        height: barH,
+                        background: focusBarColor(i),
+                        borderRadius: 3,
+                      }}
+                    />
+                  </div>
                   <div style={{ fontSize: 8, color: tone.inkSubtle, fontFamily: monoStack }}>{b.startHour}h</div>
                 </div>
               );
@@ -249,44 +250,48 @@ export function AnalyticsScreen({ tasks }: { tasks: Task[] }) {
           <div style={{ fontSize: 11, color: tone.inkMuted, marginBottom: 12 }}>
             예측한 시간과 실제 소요 시간을 비교합니다
           </div>
-          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          {/* 범례 */}
+          <div style={{ display: "flex", gap: 14, marginBottom: 10, fontSize: 10, color: tone.inkMuted }}>
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+              <span style={{ width: 10, height: 10, borderRadius: 2, background: tone.borderStrong }} /> 예측
+            </span>
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+              <span style={{ width: 10, height: 10, borderRadius: 2, background: tone.accent }} /> 실제
+            </span>
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
             {TYPES.map((type) => {
               const stat = statByType(type);
               const planned = stat?.plannedMinutes ?? 0;
               const actual = stat?.actualMinutes ?? 0;
               const max = Math.max(planned, actual, 1);
+              // 예측 대비 실제 비율(%). 100% 초과면 예측보다 오래 걸린 것.
+              const ratioPct = planned > 0 ? Math.round((actual / planned) * 100) : null;
+              const overrun = actual > planned;
               return (
                 <div key={type}>
-                  <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, marginBottom: 4 }}>
-                    <span>{TASK_TYPE_LABELS[type]}</span>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", fontSize: 11, marginBottom: 6 }}>
+                    <span style={{ fontWeight: 600 }}>{TASK_TYPE_LABELS[type]}</span>
                     <span style={{ color: tone.inkMuted, fontFamily: monoStack }}>
-                      {planned}분 / {actual}분
+                      예측 {planned}분 · 실제 {actual}분
+                      {ratioPct !== null && (
+                        <span style={{ color: overrun ? tone.warn : tone.accent, fontWeight: 600 }}> ({ratioPct}%)</span>
+                      )}
                     </span>
                   </div>
-                  <div style={{ position: "relative", height: 6, background: tone.surfaceMuted, borderRadius: 3 }}>
-                    <div
-                      style={{
-                        position: "absolute",
-                        left: 0,
-                        top: 0,
-                        height: "100%",
-                        width: `${(planned / max) * 100}%`,
-                        background: tone.borderStrong,
-                        borderRadius: 3,
-                      }}
-                    />
-                    <div
-                      style={{
-                        position: "absolute",
-                        left: 0,
-                        top: 0,
-                        height: "100%",
-                        width: `${(actual / max) * 100}%`,
-                        background: actual > planned ? tone.warn : tone.accent,
-                        borderRadius: 3,
-                        opacity: 0.8,
-                      }}
-                    />
+                  {/* 예측 막대 */}
+                  <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 4 }}>
+                    <span style={{ fontSize: 9, color: tone.inkSubtle, width: 24, flexShrink: 0 }}>예측</span>
+                    <div style={{ flex: 1, height: 8, background: tone.surfaceMuted, borderRadius: 4 }}>
+                      <div style={{ height: "100%", width: `${(planned / max) * 100}%`, background: tone.borderStrong, borderRadius: 4 }} />
+                    </div>
+                  </div>
+                  {/* 실제 막대 */}
+                  <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                    <span style={{ fontSize: 9, color: tone.inkSubtle, width: 24, flexShrink: 0 }}>실제</span>
+                    <div style={{ flex: 1, height: 8, background: tone.surfaceMuted, borderRadius: 4 }}>
+                      <div style={{ height: "100%", width: `${(actual / max) * 100}%`, background: overrun ? tone.warn : tone.accent, borderRadius: 4 }} />
+                    </div>
                   </div>
                 </div>
               );
