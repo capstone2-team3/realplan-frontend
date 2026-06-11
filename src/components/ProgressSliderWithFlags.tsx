@@ -52,7 +52,8 @@ export function ProgressSliderWithFlags({
             style={{
               position: "absolute",
               left: `${clampedPrev}%`,
-              transform: "translateX(-50%)",
+              // 슬라이더 thumb inset 때문에 깃발이 살짝 좌측으로 보여 소폭 우측으로 보정한다.
+              transform: "translateX(calc(-50% + 8px))",
               display: "flex",
               flexDirection: "column",
               alignItems: "center",
@@ -65,7 +66,8 @@ export function ProgressSliderWithFlags({
             style={{
               position: "absolute",
               left: `${clampedExpected}%`,
-              transform: "translateX(-50%)",
+              // 슬라이더 thumb inset 때문에 깃발이 살짝 좌측으로 보여 소폭 우측으로 보정한다.
+              transform: "translateX(calc(-50% + 8px))",
               display: "flex",
               flexDirection: "column",
               alignItems: "center",
