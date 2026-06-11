@@ -98,7 +98,7 @@ export function AnalyticsScreen({ tasks }: { tasks: Task[] }) {
       <div style={{ padding: "20px 16px 14px" }}>
         <div style={{ fontSize: 22, fontWeight: 700, marginBottom: 4 }}>Analytics</div>
         <div style={{ fontSize: 12, color: tone.inkMuted }}>
-          나의 학습 패턴과 계획 정확도를 확인하세요
+          나의 학습 패턴과 계획 오류 보정률을 확인하세요
         </div>
       </div>
 
