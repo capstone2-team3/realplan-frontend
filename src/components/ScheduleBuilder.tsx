@@ -18,6 +18,7 @@ export function ScheduleBuilder({
   allTasks,
   folders,
   initialSchedule,
+  onAutoFill,
   onSave,
   onClose,
 }: {
@@ -29,6 +30,7 @@ export function ScheduleBuilder({
   allTasks: Task[];
   folders: Folder[];
   initialSchedule: Record<number, string>;
+  onAutoFill?: (currentAssignment: Record<number, string>) => Promise<Record<number, string> | null>;
   onSave: (schedule: Record<number, string>) => void;
   onClose: () => void;
 }) {
@@ -36,6 +38,7 @@ export function ScheduleBuilder({
   const [assignment, setAssignment] = useState<Record<number, string>>({ ...initialSchedule });
   const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
   const [autoFillInfoOpen, setAutoFillInfoOpen] = useState(false);
+  const [autoFillBusy, setAutoFillBusy] = useState(false);
 
   // 날짜가 바뀌면 그 날짜의 저장된 시간표(initialSchedule)로 교체
   // (부모가 이전 날짜의 assignment를 schedulesByDate에 저장해두는 책임)
@@ -100,8 +103,20 @@ export function ScheduleBuilder({
   };
 
   // 시간표 자동 완성: 사용자가 비워둔 가용 슬롯에 추천 Task들을 순서대로 채움
-  const handleAutoFill = () => {
+  const handleAutoFill = async () => {
     if (recommendedTasks.length === 0) return;
+    if (onAutoFill) {
+      try {
+        setAutoFillBusy(true);
+        const next = await onAutoFill(assignment);
+        if (next) setAssignment(next);
+      } catch (e) {
+        console.error("시간표 자동 완성 실패:", e);
+      } finally {
+        setAutoFillBusy(false);
+      }
+      return;
+    }
     const next = { ...assignment };
     // 가용 슬롯 중 아직 비어 있는 슬롯 (정렬)
     const emptyAvail: number[] = [];
@@ -293,9 +308,10 @@ export function ScheduleBuilder({
                   variant="primary"
                   size="sm"
                   onClick={handleAutoFill}
+                  disabled={autoFillBusy}
                   icon={<Zap size={12} />}
                 >
-                  시간표 자동 완성
+                  {autoFillBusy ? "자동 완성 중…" : "시간표 자동 완성"}
                 </Btn>
                 <span style={{ position: "relative", display: "inline-flex" }}>
                   <button

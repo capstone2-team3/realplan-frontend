@@ -241,6 +241,46 @@ export function HomeScreen({
     if (avail.size === 0) setAvailabilityByDate((prev) => ({ ...prev, [dateStr]: new Set(planSlots) }));
   };
 
+  // 추천 Task 자동 배치: 백엔드가 Python AI /schedules/auto-place까지 호출하는
+  // POST /daily-plans/{id}/tasks/auto를 사용하고, 응답 슬롯을 빌더 상태로 되돌린다.
+  const autoFillSchedule = async (
+    targetDate: Date,
+    currentAssignment: Record<number, string>,
+  ): Promise<Record<number, string> | null> => {
+    if (!recommendation || recommendation.items.length === 0 || busy) return null;
+
+    const targetKey = dateKey(targetDate);
+    const availability = availabilityByDate[targetKey] ?? new Set<number>();
+    const planSlots = availability.size > 0
+      ? [...availability].sort((a, b) => a - b)
+      : Object.keys(currentAssignment).map(Number).sort((a, b) => a - b);
+    if (planSlots.length === 0) return null;
+
+    setBusy(true);
+    try {
+      const planId = await ensurePlan(targetKey, planSlots);
+      const plan = await api.autoAssignPlan(planId, {
+        taskIds: recommendation.items.map((t) => t.id),
+        maxTasks: recommendation.items.length,
+      });
+
+      const next: Record<number, string> = {};
+      for (const slot of plan.slots) {
+        if (slot.taskId) next[slot.slotIndex] = slot.taskId;
+      }
+      setPlanIdByDate((p) => ({ ...p, [targetKey]: plan.id }));
+      setAvailabilityByDate((p) => ({ ...p, [targetKey]: new Set(plan.slots.map((s) => s.slotIndex)) }));
+      setSchedulesByDate((p) => ({ ...p, [targetKey]: next }));
+      builderDirtyDates.current.add(targetKey);
+      return next;
+    } catch (e) {
+      console.error("시간표 자동 완성 실패:", e);
+      return null;
+    } finally {
+      setBusy(false);
+    }
+  };
+
   // 추천: 서버 DailyPlan AI 추천(GET /daily-plans/{id}/recommend)을 호출하고,
   // 추천된 taskId를 현재 태스크 목록의 Task 객체로 되돌려 기존 UI 형태({items: Task[]})로 매핑한다.
   const generateRecommendation = async () => {
@@ -780,6 +820,7 @@ export function HomeScreen({
           allTasks={tasks.filter((t) => !t.completed)}
           folders={folders}
           initialSchedule={schedulesByDate[dateKey(scheduleOpenFor)] ?? {}}
+          onAutoFill={(currentAssignment) => autoFillSchedule(scheduleOpenFor, currentAssignment)}
           onSave={async (s) => {
             if (!scheduleOpenFor) return;
             const finalKey = dateKey(scheduleOpenFor);
